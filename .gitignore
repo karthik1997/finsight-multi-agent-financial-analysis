@@ -1,0 +1,33 @@
+# Python caches and builds
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+build/
+dist/
+*.egg-info/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Credentials or local configuration
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Runtime notes/cache and downloaded model/dataset files
+notes.json
+*_notes.json
+_cache/
+cache/
+model_cache/
+FinQA_data/
+
+# Temporary outputs
+.DS_Store
+*.log
