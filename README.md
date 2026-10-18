@@ -1,66 +1,43 @@
 # FinSight — Multi-Agent Financial Analysis System
 
-**University of San Diego · AAI-520 · Team 3**
+**AAI-520 — University of San Diego · Team 3**
 
-**Team:** Hivanshu Kapania · Karthik K · Navneet Kumar
+**Members:** Hivanshu Kapania, Karthik K and Navneet Kumar
 
-## Repository URL
+## Final submission
 
-https://github.com/karthik1997/finsight-multi-agent-financial-analysis
+- [Executed final notebook](FinSight_Team3_Final_Notebook.ipynb) — **real FinQA development subset, MiniLM embeddings, FLAN-T5-Small model, 20 executed Python cells, synthetic architecture demonstration and live read-only quote**.
+- [**Final Canvas HTML**](FinSight_Team3_Final_Submission.html) — code, real outputs, analysis, and AI assistance disclosure. Submit **this HTML** or an exported PDF on Canvas.
 
-## What was built
+**GitHub repository:** https://github.com/karthik1997/finsight-multi-agent-financial-analysis
 
-FinSight is an educational, read-only financial research prototype that combines:
+## Project requirements implemented
 
-- **Planner:** selects a research plan based on symbol, question, prior notes.
-- **Tool use:** vector-space retrieval, news classification/extraction, arithmetic calculator, and read-only market quote lookup.
-- **Memory:** JSON-based run notes with feedback; a previous failed review increases subsequent retrieval depth.
-- **Routing:** earnings, news, and market specialist pathways.
-- **Prompt chaining:** **Ingest News → Preprocess → Classify → Extract → Summarize**.
-- **Evaluator–optimizer:** creates an answer, checks evidence and arithmetic, widens retrieval once when necessary, and records the result.
-- **Optional Hugging Face LLM:** `google/flan-t5-small` generated answers from retrieved passages. The offline demonstration does not claim to use a model.
-- **Official FinQA evaluation path:** fetch original JSON from the authors' repository; retain answers separately from retrieved documents; measure hit@3, MRR@3, simple numeric answer accuracy, and abstention.
+- Autonomous investment-research **planning**
+- Bounded dynamic **tool invocation**: report retrieval, classification, extraction, restricted calculator, optional read-only quote
+- Self-reflection/evaluator–optimizer with one evidence refinement step
+- Persistent feedback memory with retrieval-depth adjustment
+- **Prompt chaining:** Ingest News → Preprocess → Classify → Extract → Summarize
+- **Routing:** earnings, news, market specialists
+- **Evaluator–optimizer:** generate → evaluate → refine
 
-## Files
+## Observed REAL data results (educational, not official benchmark)
 
-- `FinSight_Team3_Final_Notebook.ipynb` — self-contained, source-code-inclusive notebook.
-- `FinSight_Team3_Executed_Demo.html` — executed, self-contained HTML **of the synthetic offline architecture demonstration**, clearly labeled.
-- `finsight_core.py` — PEP 8-oriented reference code for repository collaboration.
-- `test_finsight.py` — reproducible test suite.
-- `requirements.txt` — dependencies; most are only needed for the Colab real-data path.
-- `team_contributions.md` — responsibilities from the status update.
+- Downloaded: **100 FinQA `dev` records** from the [official repository](https://github.com/czyssrs/FinQA)
+- Dense retrieval: **all-MiniLM-L6-v2**
+- Generation: **google/flan-t5-small**
+- Retrieval **Hit@3 = 56.7%**, **MRR@3 = 0.5111** over the first **30** questions
+- Numeric answer accuracy **0/8 = 0%**, abstention **1/8 = 12.5%** over eight samples
+- Structural `Verified=True` **does not** establish numeric correctness, and the internal calculator produced some invalid arithmetic outputs
 
-## Run the offline demonstrator
+**These are honest findings, not an investment-ready agent.** A separate fictional DEMO corpus tests architecture and should not be mistaken for real benchmark outcomes.
 
-```bash
-python -m pip install numpy pandas scikit-learn requests nbformat nbconvert
-python -m unittest -v test_finsight.py
-jupyter notebook FinSight_Team3_Final_Notebook.ipynb
-```
+## Test and development
 
-Run All. On a regular environment without Colab, the notebook runs the fully labeled synthetic example so the agent patterns can be verified without data or model downloads.
+Core: `finsight_core.py`, `test_finsight.py` and `requirements.txt`. Run `python -m unittest -v test_finsight.py`. Nine core local tests passed in the working environment. The real HF evaluation requires a networked environment with model downloads.
 
-## Run the real FinQA + Hugging Face mode (recommended for final academic evaluation)
+A GitHub Actions workflow is provided under `.github/workflows/python-tests.yml`. Actual contributions and teammate commits must be documented separately.
 
-1. Open the `.ipynb` in Google Colab.
-2. Set `RUN_REAL_FINQA = True`, `USE_SENTENCE_EMBEDDINGS = True`, and `USE_LOCAL_HF_LLM = True` in **Configuration**.
-3. Enable Internet and optionally a GPU in Runtime settings.
-4. Run `pip install -q sentence-transformers transformers sentencepiece yfinance` if the notebook offers installation or the packages are absent.
-5. Run all cells, inspect both retrieval and model outputs, and export to HTML or PDF.
-6. Confirm the verified repository URL is visible in the exported report, and add team-validated contribution and evaluation observations.
+## AI-use disclosure
 
-**FinQA:** official `https://github.com/czyssrs/FinQA` dataset, using author-provided train/dev/test files. The project reads `dev.json` without putting answer labels or oracle programs in the retrieval context. FinQA does not expose current stock prices or tickers in each QA row, so these are separate functionality demonstrations.
-
-## Academic integrity and validation
-
-The HTML produced here contains *real executed outputs of the synthetic classroom DEMO company*, not actual FinQA benchmark or live Yahoo Finance market results. Do not present that HTML as proof of real-data model performance. To meet all project requirements rigorously, the team should execute and export the FinQA + Hugging Face mode.
-
-AI tools were used to support drafting, coding, testing, notebook layout, and documentation; the team must review, understand, modify, cite, and own its actual contributions. No claims are made about fabricated Git commits or team actions.
-
-### Project limitations
-
-- No investment advice, no trading access, no write privileges to brokerages.
-- The feedback evaluator is structural and can miss semantic hallucinations; human oversight remains important.
-- Miniature FinQA subset metrics are **not** official leaderboard metrics.
-- The local `flan-t5-small` baseline is lightweight, not a specialized financial numeric reasoner.
-- The synthetic offline example is not a real company.
+AI tools were used to assist with project scaffolding, coding, test design, explanation, documentation, and revisions. All final results and limitations must be reviewed by the team; this repository does not claim that autonomous model numerical reasoning was successful.
