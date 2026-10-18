@@ -1,0 +1,16 @@
+# Core (offline demo and all notebook algorithms)
+numpy>=1.24,<3
+pandas>=2.0
+scikit-learn>=1.3
+requests>=2.31
+jupyter>=1.0
+nbformat>=5.9
+nbconvert>=7.8
+
+# Optional: real FinQA dense retrieval, HF LLM and market snapshot
+sentence-transformers>=3.0
+transformers>=4.44,<6
+sentencepiece>=0.2
+safetensors>=0.4
+huggingface-hub>=0.25
+yfinance>=0.2
