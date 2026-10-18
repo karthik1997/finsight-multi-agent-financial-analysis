@@ -1,0 +1,1791 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>FinSight — Final AAI-520 Team Project</title><meta name="viewport" content="width=device-width, initial-scale=1"><style>html{background:#f2f4f9;color:#243041;font:15px/1.6 -apple-system,BlinkMacSystemFont,Segoe UI,Arial,sans-serif}body{max-width:1120px;margin:20px auto;padding:40px 52px;background:white;box-shadow:0 5px 22px #0001;border-radius:10px}h1{font-size:2rem;color:#17365a;margin:.4em 0}h2{font-size:1.4rem;color:#17365a;border-bottom:1px solid #dfe6ef;padding-bottom:.3em;margin-top:2em}h3{font-size:1.13rem;color:#2d5c85}a{color:#1459ab}pre{white-space:pre-wrap;overflow-wrap:anywhere}pre.codeblock{white-space:pre;overflow-x:auto;background:#f6f8fb;border:1px solid #dae0e9;border-radius:6px;padding:16px;color:#253752;font:12.5px/1.55 Menlo,Consolas,monospace}pre.out{white-space:pre;overflow-x:auto;background:#fbfcff;border-left:3px solid #6087c6;padding:12px;font:12.5px/1.5 Menlo,Consolas,monospace}table{border-collapse:collapse;display:block;overflow-x:auto;margin:14px 0 22px;max-width:100%}td,th{border:1px solid #d7e0ed;padding:7px 11px;text-align:left}tr:nth-child(even){background:#f6f9fd}.cell{border-top:1px solid #e3e8ee;padding-top:20px;margin-top:20px}.cellnum{font:12px/1.5 Menlo,Consolas,monospace;color:#64748b;margin-bottom:7px}.pandas{overflow-x:auto}.pandas table{font-size:13px}.md blockquote{border-left:3px solid #7ca0c7;margin:8px 0;padding:6px 20px;background:#f8fbfe}img{max-width:100%;height:auto}.outputs{margin:12px 0 28px}footer{font-size:13px;color:#626e80;border-top:1px solid #ddd;margin-top:48px;padding-top:18px}@media print{html{background:white}body{box-shadow:none;margin:0;padding:18px}.cell{break-inside:avoid}h2{break-after:avoid}pre{white-space:pre-wrap!important;overflow-wrap:anywhere!important}table{display:table}}</style></head><body><section class="md"><h2>FinSight — Multi-Agent Financial Analysis System</h2>
+<h4>AAI-520 · University of San Diego · Final Team Project</h4>
+
+<p><strong>Team 3:</strong> Hivanshu Kapania · Karthik K · Navneet Kumar  </p>
+<p><strong>Project:</strong> FinSight — Multi-Agent Financial Analysis System  </p>
+<p><strong>GitHub repository:</strong> https://github.com/karthik1997/finsight-multi-agent-financial-analysis</p>
+
+
+<h3>Executive Summary</h3>
+
+<p>FinSight implements an investment research <em>agentic</em> prototype that:</p>
+
+<p>1. <strong>Plans</strong> question-specific steps and selects a specialist.</p>
+<p>2. <strong>Acts</strong> using retrieval, classification, summarization, safe arithmetic, and optional market snapshot tools.</p>
+<p>3. <strong>Reflects</strong> through an evaluator–optimizer with an additional retrieval iteration on failure.</p>
+<p>4. <strong>Learns across runs</strong> by persisting small feedback notes and using them to adjust retrieval depth.</p>
+
+<p>The three required workflow patterns are operational:</p>
+<p><strong>prompt chaining</strong>, <strong>routing</strong>, and <strong>evaluator–optimizer</strong>. The system is read-only; it never executes trades.</p>
+<p><strong>Executed real-data evidence:</strong> This notebook also includes the actual FinQA <code>dev</code> sample, MiniLM dense embeddings, FLAN-T5-Small inference and a read-only Yahoo market-data call. Measured numeric answer accuracy was <strong>0/8</strong>, described in the evaluation.</p>
+</section>
+<section class="md"><h3>1. Task Requirements and Team Responsibilities</h3>
+
+<table><tbody>
+<tr><td>Rubric section</td><td>Implementation</td><td>Verification</td></tr>
+<tr><td>Agent functions (33.8%)</td><td><code>InvestmentResearchAgent.plan</code>, <code>ToolRegistry</code>, <code>evaluate</code>, <code>AnalysisMemory</code></td><td>Plan, tool trace, memory before/after</td></tr>
+<tr><td>Workflow patterns (33.8%)</td><td>News prompt chain; specialist <code>detect_specialist</code>; evaluator–optimizer refinement</td><td>Five-stage news log; earnings/news/market routes; iteration log</td></tr>
+<tr><td>Code (32.4%)</td><td>Self-contained notebook, typed classes, tools, FinQA converter, tests, outputs</td><td>Executed offline demonstrations and tests</td></tr>
+</tbody></table>
+
+<p><strong>Division of planned responsibilities from the Module 4 status form:</strong></p>
+
+<ul>
+<li><strong>Hivanshu Kapania — Data and Retrieval:</strong> FinQA ingestion, text/table processing, embeddings/retrieval, retrieval evaluation.</li>
+<li><strong>Karthik K — Architecture and Orchestration:</strong> agent planner/router, pipeline integration, verification/guardrails, evidence-grounded synthesis.</li>
+<li><strong>Navneet Kumar — Numerical Reasoning and Evaluation:</strong> financial metrics, Hugging Face model experiments, safe calculator, answer/error evaluation.</li>
+</ul>
+
+<p>These are <em>planned contributions from the status form</em>, not a claim that GitHub commits or individual contributions have already been verified. Each teammate should review, run, and customize their sections before final submission.</p></section>
+<section class="md"><h3>2. Architecture and Data Flow</h3>
+
+<pre class="codeblock"><code>
+Question + Symbol
+
+      |
+
+ Planner + Previous Memory Notes
+
+      |
+
+ Specialist Router ---------------------------+
+
+      |                |                       |
+
+ Earnings Analyst     News Analyst            Market Analyst
+
+      |                |                       |
+
+ FinQA / reports      NEWS CHAIN              Read-only quote tool
+
+      |                |                       |
+
+ Search / retrieve    Ingest -&gt; Preprocess    Evidence lookup
+
+      |                |                       |
+
+      |               Classify -&gt; Extract      |
+
+      |                |                       |
+
+      |               Summarize                |
+
+      +----------------+-----------------------+
+
+                       |
+
+                 Draft Response
+
+                       |
+
+               Grounding Evaluator
+
+                       |
+
+             PASS? ----+---- NO
+
+               |             |
+
+             Answer      Widen retrieval
+
+               |             |
+
+               |         Re-generate / Re-evaluate
+
+               +-------------+
+
+                       |
+
+              Persist brief feedback
+
+</code></pre>
+
+<p><strong>Tool trust boundaries:</strong> retrieved documents are untrusted data; the calculator uses an AST whitelist rather than unrestricted <code>eval</code>; no tools have trading or brokerage write access. The source-label validator checks cited document IDs but cannot guarantee every assertion is factually supported. Human review remains necessary.</p></section>
+<section class="md"><h3>3. Configuration and Reproducibility</h3>
+
+<p>The uploaded original notebook was executed with <strong>RUN_REAL_FINQA=True</strong>, <strong>USE_SENTENCE_EMBEDDINGS=True</strong>, <strong>USE_LOCAL_HF_LLM=True</strong> and <strong>RUN_LIVE_MARKET_API=True</strong>. The saved outputs include real FinQA record downloads, dense semantic retrieval, Hugging Face inference and a timestamped read-only market lookup.</p>
+
+<p><strong>Real-data provenance:</strong> https://github.com/czyssrs/FinQA — original <code>dev.json</code>, first 100 records. Gold answers and reasoning programs were kept out of retrieval passages. Generated outputs below reflect a small illustrative study, <em>not</em> official FinQA benchmark performance.</p>
+
+<p>The separate fictional <strong>DEMO</strong> dataset demonstrates agent architecture only. Re-running real evaluation requires a network-enabled runtime and optional model packages.</p>
+</section>
+<section class="cell"><div class="cellnum">Code cell 5 · execution 1</div><pre class="codeblock"><code>RUN_REAL_FINQA = True             # Change to True in Colab for actual FinQA data
+USE_SENTENCE_EMBEDDINGS = True    # Requires sentence-transformers download
+USE_LOCAL_HF_LLM = True           # Requires transformers + flan-t5-small weights
+INSTALL_OPTIONAL_PACKAGES = True # Change to True to install dependencies in Colab
+FINQA_RECORD_LIMIT = 100          # Runtime-constrained dev subset, not leaderboard
+FINQA_EVAL_QUESTIONS = 8          # Number of sampled generation evaluations
+
+if INSTALL_OPTIONAL_PACKAGES:
+    import subprocess
+    import sys
+    subprocess.check_call([
+        sys.executable, &quot;-m&quot;, &quot;pip&quot;, &quot;install&quot;, &quot;-q&quot;,
+        &quot;sentence-transformers&gt;=3.0&quot;, &quot;transformers&gt;=4.44,&lt;6&quot;,
+        &quot;sentencepiece&gt;=0.2&quot;, &quot;yfinance&gt;=0.2&quot;
+    ])
+
+print(&quot;Execution configuration:&quot;)
+print({&quot;run_real_finqa&quot;: RUN_REAL_FINQA,
+       &quot;sentence_embeddings&quot;: USE_SENTENCE_EMBEDDINGS,
+       &quot;huggingface_llm&quot;: USE_LOCAL_HF_LLM,
+       &quot;dataset_limit&quot;: FINQA_RECORD_LIMIT})</code></pre><div class="outputs"><pre class="out">Execution configuration:
+{'run_real_finqa': True, 'sentence_embeddings': True, 'huggingface_llm': True, 'dataset_limit': 100}
+</pre></div></section>
+<section class="md"><h3>4. Core Imports, Documents and Tool Registry</h3>
+
+<p>The notebook contains the full source directly. The registry records every tool invocation and its arguments. Tools are called dynamically based on the selected specialist, question, and evaluator feedback.</p></section>
+<section class="cell"><div class="cellnum">Code cell 7 · execution 2</div><pre class="codeblock"><code>from __future__ import annotations
+
+import ast
+import hashlib
+import json
+import math
+import operator
+import os
+import re
+from collections import Counter
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Dict, Iterable, List, Optional
+
+import numpy as np
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity</code></pre><div class="outputs"></div></section>
+<section class="cell"><div class="cellnum">Code cell 8 · execution 3</div><pre class="codeblock"><code>@dataclass
+class ResearchDocument:
+    doc_id: str
+    symbol: str
+    kind: str
+    title: str
+    content: str
+    source: str
+    published: str = &quot;unknown&quot;
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+    def display(self) -&gt; str:
+        return f&quot;[{self.doc_id}] ({self.kind}; {self.source}) {self.title}: {self.content}&quot;
+
+@dataclass
+class ToolEvent:
+    tool: str
+    parameters: Dict[str, Any]
+    outcome: str
+
+class ToolRegistry:
+    def __init__(self):
+        self.tools: Dict[str, Any] = {}
+        self.events: List[ToolEvent] = []
+
+    def register(self, name: str, func: Any) -&gt; None:
+        self.tools[name] = func
+
+    def call(self, name: str, **kwargs) -&gt; Any:
+        if name not in self.tools:
+            raise KeyError(f&quot;Unknown tool: {name}&quot;)
+        try:
+            result = self.tools[name](**kwargs)
+            preview = str(result)
+            self.events.append(ToolEvent(name, kwargs, preview[:160]))
+            return result
+        except Exception as exc:
+            self.events.append(ToolEvent(name, kwargs, f&quot;ERROR: {exc}&quot;))
+            raise</code></pre><div class="outputs"></div></section>
+<section class="md"><h3>5. Retrieval and Restricted Calculator</h3>
+
+<p>The retriever supports semantic sentence-transformer embeddings (<code>all-MiniLM-L6-v2</code>) in real-data mode and a fully executable TF-IDF vector-space baseline offline. Similarity and top-k results are explicit; these backends are not presented as equivalent.</p>
+
+<p><code>safe_calculate</code> parses a small arithmetic grammar; Python imports, function calls, identifiers and attributes are rejected.</p></section>
+<section class="cell"><div class="cellnum">Code cell 10 · execution 4</div><pre class="codeblock"><code>class SemanticRetriever:
+    &quot;&quot;&quot;Vector-space semantic retriever: sentence embeddings if available; TF-IDF otherwise.
+
+    No benchmark claim is made about TF-IDF: it is an offline lexical baseline.
+    &quot;&quot;&quot;
+    def __init__(self, docs: List[ResearchDocument], embedding_backend=&quot;tfidf&quot;,
+                 model_name=&quot;sentence-transformers/all-MiniLM-L6-v2&quot;):
+        self.docs = list(docs)
+        self.backend = &quot;tfidf&quot;
+        self.encoder = None
+        self.vectorizer = None
+        texts = [f&quot;{d.title}. {d.content}&quot; for d in docs]
+        if embedding_backend == &quot;sentence_transformer&quot;:
+            from sentence_transformers import SentenceTransformer
+            self.encoder = SentenceTransformer(model_name)
+            self.vectors = np.asarray(self.encoder.encode(texts, normalize_embeddings=True))
+            self.backend = f&quot;sentence_transformer ({model_name})&quot;
+        else:
+            self.vectorizer = TfidfVectorizer(ngram_range=(1, 2), stop_words=&quot;english&quot;)
+            self.vectors = self.vectorizer.fit_transform(texts)
+
+    def retrieve(self, query: str, top_k: int = 3,
+                 symbol: Optional[str] = None, kind: Optional[str] = None) -&gt; List[Dict[str, Any]]:
+        eligible = [i for i, d in enumerate(self.docs)
+                    if (not symbol or d.symbol.upper() == symbol.upper())
+                    and (not kind or d.kind == kind)]
+        if not eligible:
+            return []
+        if self.encoder is not None:
+            q = self.encoder.encode([query], normalize_embeddings=True)
+            scores = (self.vectors[eligible] @ q[0]).tolist()
+        else:
+            q = self.vectorizer.transform([query])
+            scores = cosine_similarity(q, self.vectors[eligible]).ravel().tolist()
+        ranked = sorted(zip(eligible, scores), key=lambda x: x[1], reverse=True)[:top_k]
+        return [{&quot;document&quot;: self.docs[idx], &quot;score&quot;: float(score)} for idx, score in ranked]</code></pre><div class="outputs"></div></section>
+<section class="cell"><div class="cellnum">Code cell 11 · execution 5</div><pre class="codeblock"><code>_ALLOWED_BINOPS = {ast.Add: operator.add, ast.Sub: operator.sub, ast.Mult: operator.mul,
+                  ast.Div: operator.truediv, ast.Pow: operator.pow}
+_ALLOWED_UNARY = {ast.UAdd: operator.pos, ast.USub: operator.neg}
+
+def safe_calculate(expression: str) -&gt; float:
+    &quot;&quot;&quot;Evaluate arithmetic only: no function calls, variables, attributes, or Python execution.&quot;&quot;&quot;
+    if len(expression) &gt; 120:
+        raise ValueError(&quot;Expression too long&quot;)
+    tree = ast.parse(expression, mode=&quot;eval&quot;)
+
+    def walk(node, depth=0):
+        if depth &gt; 14:
+            raise ValueError(&quot;Expression nesting too deep&quot;)
+        if isinstance(node, ast.Expression):
+            return walk(node.body, depth + 1)
+        if isinstance(node, ast.Constant) and type(node.value) in (float, int):
+            if abs(node.value) &gt; 1e12:
+                raise ValueError(&quot;Literal magnitude too large&quot;)
+            return node.value
+        if isinstance(node, ast.BinOp) and type(node.op) in _ALLOWED_BINOPS:
+            left, right = walk(node.left, depth + 1), walk(node.right, depth + 1)
+            if isinstance(node.op, ast.Pow) and (abs(right) &gt; 8 or abs(left) &gt; 1e6):
+                raise ValueError(&quot;Unsafe exponentiation&quot;)
+            return _ALLOWED_BINOPS[type(node.op)](left, right)
+        if isinstance(node, ast.UnaryOp) and type(node.op) in _ALLOWED_UNARY:
+            return _ALLOWED_UNARY[type(node.op)](walk(node.operand, depth + 1))
+        raise ValueError(&quot;Unsafe calculation&quot;)
+
+    result = float(walk(tree))
+    if not math.isfinite(result):
+        raise ValueError(&quot;Nonfinite result&quot;)
+    return result</code></pre><div class="outputs"></div></section>
+<section class="md"><h3>6. Workflow Pattern 1 — Prompt Chaining</h3>
+
+<p>The required linear sequence is implemented as separately testable functions: <strong>Ingest News → Preprocess → Classify → Extract → Summarize</strong>. Financial keywords and amounts are extracted from provided documents. This is an auditable baseline that could be replaced by an LLM classifier in later iterations.</p></section>
+<section class="cell"><div class="cellnum">Code cell 13 · execution 6</div><pre class="codeblock"><code>def ingest_news(documents: Iterable[ResearchDocument]) -&gt; List[ResearchDocument]:
+    return [d for d in documents if d.kind == &quot;news&quot;]
+
+def preprocess_news(documents: Iterable[ResearchDocument]) -&gt; List[ResearchDocument]:
+    return [ResearchDocument(**{**d.__dict__, &quot;content&quot;: &quot; &quot;.join(d.content.split())})
+            for d in documents]
+
+def classify_news(documents: Iterable[ResearchDocument]) -&gt; List[Dict[str, Any]]:
+    labels = {&quot;earnings&quot;: [&quot;earnings&quot;, &quot;revenue&quot;, &quot;profit&quot;, &quot;quarter&quot;, &quot;results&quot;],
+              &quot;market&quot;: [&quot;price&quot;, &quot;share&quot;, &quot;stock&quot;, &quot;market&quot;, &quot;volume&quot;],
+              &quot;risk&quot;: [&quot;recall&quot;, &quot;lawsuit&quot;, &quot;investigation&quot;, &quot;risk&quot;, &quot;regulator&quot;]}
+    classified = []
+    for d in documents:
+        t = (d.title + &quot; &quot; + d.content).lower()
+        counts = {k: sum(w in t for w in v) for k, v in labels.items()}
+        cls = max(counts, key=counts.get) if max(counts.values()) else &quot;general&quot;
+        classified.append({&quot;document&quot;: d, &quot;category&quot;: cls})
+    return classified
+
+def extract_news(items: List[Dict[str, Any]]) -&gt; List[Dict[str, Any]]:
+    extracted = []
+    for item in items:
+        text = item[&quot;document&quot;].content
+        figures = re.findall(r&quot;(?&lt;![\w])(?:\$\s*)?\d[\d,]*(?:\.\d+)?\s*(?:%|million|billion)?&quot;, text, flags=re.I)
+        extracted.append({**item, &quot;figures&quot;: figures[:12]})
+    return extracted
+
+def summarize_news(items: List[Dict[str, Any]], max_items=3) -&gt; str:
+    if not items:
+        return &quot;No relevant news articles are available in the supplied corpus.&quot;
+    summaries = []
+    for item in items[:max_items]:
+        d = item[&quot;document&quot;]
+        first = re.split(r&quot;(?&lt;=[.!?])\s+&quot;, d.content, maxsplit=1)[0]
+        summaries.append(f&quot;[{d.doc_id}] {d.title}: {first} (category: {item['category']})&quot;)
+    return &quot;\n&quot;.join(summaries)
+
+def news_prompt_chain(documents: List[ResearchDocument]) -&gt; Dict[str, Any]:
+    &quot;&quot;&quot;Required workflow: ingest -&gt; preprocess -&gt; classify -&gt; extract -&gt; summarize.&quot;&quot;&quot;
+    trace = []
+    x = ingest_news(documents)
+    trace.append({&quot;stage&quot;: &quot;Ingest News&quot;, &quot;count&quot;: len(x)})
+    x = preprocess_news(x)
+    trace.append({&quot;stage&quot;: &quot;Preprocess&quot;, &quot;count&quot;: len(x)})
+    y = classify_news(x)
+    trace.append({&quot;stage&quot;: &quot;Classify&quot;, &quot;labels&quot;: [r[&quot;category&quot;] for r in y]})
+    z = extract_news(y)
+    trace.append({&quot;stage&quot;: &quot;Extract&quot;, &quot;figure_counts&quot;: [len(r[&quot;figures&quot;]) for r in z]})
+    final = summarize_news(z)
+    trace.append({&quot;stage&quot;: &quot;Summarize&quot;, &quot;chars&quot;: len(final)})
+    return {&quot;summary&quot;: final, &quot;items&quot;: z, &quot;trace&quot;: trace}</code></pre><div class="outputs"></div></section>
+<section class="md"><h3>7. Workflow Pattern 2 — Routing and Cross-Run Memory</h3>
+
+<p>The coordinator sends queries to earnings, news, or market specialists. Notes from a failed run expand retrieval depth when a similar symbol is researched again. These notes contain only status, specialist, and feedback — not source passages or credentials.</p></section>
+<section class="cell"><div class="cellnum">Code cell 15 · execution 7</div><pre class="codeblock"><code>def detect_specialist(question: str, preferred_kind: Optional[str] = None) -&gt; str:
+    &quot;&quot;&quot;Content routing (not fixed routing for every query).&quot;&quot;&quot;
+    if preferred_kind in {&quot;earnings&quot;, &quot;news&quot;, &quot;market&quot;}:
+        return preferred_kind
+    q = question.lower()
+    if any(w in q for w in (&quot;news&quot;, &quot;headline&quot;, &quot;article&quot;, &quot;announcement&quot;)):
+        return &quot;news&quot;
+    if any(w in q for w in (&quot;share price&quot;, &quot;stock price&quot;, &quot;market price&quot;, &quot;volatility&quot;, &quot;quote&quot;, &quot;volume&quot;)):
+        return &quot;market&quot;
+    return &quot;earnings&quot;
+
+class AnalysisMemory:
+    &quot;&quot;&quot;Short local notes, with timestamps and no storage of retrieved document text.&quot;&quot;&quot;
+    def __init__(self, path: str):
+        self.path = Path(path)
+        if self.path.exists():
+            try:
+                self.notes = json.loads(self.path.read_text(encoding=&quot;utf-8&quot;))
+            except (ValueError, OSError):
+                self.notes = {}
+        else:
+            self.notes = {}
+
+    def recall(self, symbol: str) -&gt; List[Dict[str, Any]]:
+        return list(self.notes.get(symbol.upper(), []))[-3:]
+
+    def store(self, symbol: str, specialist: str, outcome: str, feedback: str) -&gt; None:
+        key = symbol.upper()
+        self.notes.setdefault(key, []).append({
+            &quot;time&quot;: datetime.now(timezone.utc).isoformat(timespec=&quot;seconds&quot;),
+            &quot;specialist&quot;: specialist,
+            &quot;outcome&quot;: outcome[:80],
+            &quot;feedback&quot;: feedback[:140],
+        })
+        self.notes[key] = self.notes[key][-12:]
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.path.write_text(json.dumps(self.notes, indent=2), encoding=&quot;utf-8&quot;)</code></pre><div class="outputs"></div></section>
+<section class="md"><h3>8. Optional Hugging Face Generator</h3>
+
+<p>When <code>USE_LOCAL_HF_LLM=True</code>, the system uses a real pretrained encoder–decoder LLM (<code>google/flan-t5-small</code>) through <code>AutoTokenizer</code> and <code>AutoModelForSeq2SeqLM</code> (not the deprecated <code>text2text-generation</code> pipeline). A second constrained output can propose a numerical expression to the restricted calculator.</p>
+
+<p>In the <strong>offline demonstration</strong>, no model weights are loaded and the agent explicitly uses an extractive arithmetic baseline. This is useful for verifying orchestration but does <strong>not</strong> constitute evidence of actual LLM performance.</p></section>
+<section class="cell"><div class="cellnum">Code cell 17 · execution 8</div><pre class="codeblock"><code>class LocalLLM:
+    &quot;&quot;&quot;Optional genuine local HF encoder-decoder LLM. Run in a networked Colab environment.&quot;&quot;&quot;
+    def __init__(self, model_name=&quot;google/flan-t5-small&quot;):
+        from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
+        import torch
+        self.torch = torch
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+        self.model = AutoModelForSeq2SeqLM.from_pretrained(model_name)
+        self.device = &quot;cuda&quot; if torch.cuda.is_available() else &quot;cpu&quot;
+        self.model.to(self.device).eval()
+        self.model_name = model_name
+
+    def generate(self, prompt: str, max_new_tokens=150) -&gt; str:
+        encoded = self.tokenizer(prompt, return_tensors=&quot;pt&quot;, truncation=True,
+                                 max_length=512).to(self.device)
+        with self.torch.no_grad():
+            output = self.model.generate(**encoded, max_new_tokens=max_new_tokens,
+                                         do_sample=False)
+        return self.tokenizer.decode(output[0], skip_special_tokens=True).strip()</code></pre><div class="outputs"></div></section>
+<section class="md"><h3>9. Agent Functions and Workflow Pattern 3 — Evaluator–Optimizer</h3>
+
+<p>The agent autonomously (within a bounded, read-only policy):</p>
+
+<p>1. Determines the specialist and plans research steps.</p>
+<p>2. Calls retrieval and additional tools according to the task.</p>
+<p>3. Generates a grounded response or abstains.</p>
+<p>4. Evaluates citation IDs, numeric computation and minimum question coverage.</p>
+<p>5. On failure, widens retrieval once and compares evaluation scores.</p>
+<p>6. Persists a feedback note and modifies retrieval depth on the next run.</p>
+
+<p><strong>Limitation:</strong> structural citation checking and calculator execution are <em>not</em> proofs that all model-generated claims are faithful to their sources. Manual auditing is recommended.</p></section>
+<section class="cell"><div class="cellnum">Code cell 19 · execution 9</div><pre class="codeblock"><code>class InvestmentResearchAgent:
+    &quot;&quot;&quot;Planner + dynamic tools + specialist routing + evaluator-optimizer + memory.&quot;&quot;&quot;
+    def __init__(self, documents: List[ResearchDocument], memory_path: str,
+                 embedding_backend=&quot;tfidf&quot;, llm: Optional[Any] = None,
+                 quotes: Optional[Dict[str, Dict[str, Any]]] = None):
+        self.documents = list(documents)
+        self.retriever = SemanticRetriever(self.documents, embedding_backend=embedding_backend)
+        self.memory = AnalysisMemory(memory_path)
+        self.llm = llm
+        self.quotes = quotes or {}
+        self.registry = ToolRegistry()
+        self.registry.register(&quot;retrieve&quot;, self.retriever.retrieve)
+        self.registry.register(&quot;news_chain&quot;, lambda symbol: news_prompt_chain(
+            [d for d in self.documents if d.symbol.upper() == symbol.upper()]))
+        self.registry.register(&quot;quote_lookup&quot;, lambda symbol: self.quotes.get(symbol.upper()))
+        self.registry.register(&quot;calculator&quot;, safe_calculate)
+
+    @staticmethod
+    def plan(symbol: str, question: str, specialist: str, previous_notes: List[Dict[str, Any]]) -&gt; List[str]:
+        steps = [f&quot;Classify task and route to {specialist} specialist&quot;,
+                 f&quot;Retrieve grounded evidence for {symbol} and question&quot;,
+                 &quot;Extract relevant numerical facts and consult tools if needed&quot;,
+                 &quot;Generate concise answer with explicit evidence identifiers&quot;,
+                 &quot;Evaluate grounding, question coverage, and arithmetic consistency&quot;]
+        if previous_notes:
+            steps.append(&quot;Use previous feedback notes to improve result&quot;)
+        steps.append(&quot;Refine once on failure; retain short feedback memory&quot;)
+        return steps
+
+    def _evidence_answer(self, question: str, hits: List[Dict[str, Any]], specialist: str,
+                         symbol: str) -&gt; Dict[str, Any]:
+        if not hits or (hits[0][&quot;score&quot;] &lt; 0.045 and specialist != &quot;news&quot;):
+            return {&quot;answer&quot;: &quot;Insufficient evidence in the available sources.&quot;,
+                    &quot;source_ids&quot;: [], &quot;calculation&quot;: None, &quot;abstained&quot;: True}
+        content = &quot;\n&quot;.join(row[&quot;document&quot;].display()[:850] for row in hits[:3])
+        source_ids = [h[&quot;document&quot;].doc_id for h in hits[:3]]
+
+        # A model can synthesize from retrieved text, but source IDs are enforced downstream.
+        if self.llm is not None:
+            prompt = (&quot;You are a cautious financial-research assistant. Answer only from the &quot;
+                      &quot;EVIDENCE. If the evidence is inadequate, say 'Insufficient evidence'. &quot;
+                      &quot;Do not invent figures, dates, source IDs, or citations. &quot;
+                      &quot;Show a short computation if applicable.\n&quot;
+                      f&quot;QUESTION: {question}\nEVIDENCE:\n{content}\nANSWER:&quot;)
+            answer = self.llm.generate(prompt)
+            abstained = &quot;insufficient evidence&quot; in answer.lower() or not answer.strip()
+            calculation = None
+            # A second, constrained tool-use pass is attempted for numerical questions.
+            # The expression is NOT trusted until a restricted calculator evaluates it.
+            if not abstained and re.search(r&quot;\b(percentage|percent|how much|ratio|change)\b&quot;, question, re.I):
+                eq_prompt = (&quot;From the evidence below, return only one numerical Python arithmetic &quot;
+                             &quot;expression that answers the question, such as &quot;
+                             &quot;(250-200)/200*100. No variables or function calls. &quot;
+                             &quot;Return NONE if not enough evidence.\n&quot;
+                             f&quot;QUESTION: {question}\nEVIDENCE: {content[:1200]}\nEXPRESSION:&quot;)
+                candidate = self.llm.generate(eq_prompt, max_new_tokens=55).strip()
+                candidate = candidate.removeprefix(&quot;EXPRESSION:&quot;).strip().splitlines()[0]
+                candidate = candidate.rstrip(&quot;. &quot;)
+                if candidate != &quot;NONE&quot;:
+                    try:
+                        value = self.registry.call(&quot;calculator&quot;, expression=candidate)
+                        calculation = {&quot;expression&quot;: candidate, &quot;value&quot;: value}
+                        answer += f&quot; [Calculator result: {value:.4g} from {candidate}]&quot;
+                    except (ValueError, SyntaxError, ZeroDivisionError, OverflowError):
+                        pass
+            return {&quot;answer&quot;: answer or &quot;Insufficient evidence in the available sources.&quot;,
+                    &quot;source_ids&quot;: [] if abstained else source_ids,
+                    &quot;calculation&quot;: calculation, &quot;abstained&quot;: abstained}
+
+        # Fully labeled synthetic demonstration only; NOT FinQA benchmark prediction.
+        primary = hits[0][&quot;document&quot;]
+        if primary.metadata.get(&quot;demo_arithmetic&quot;) and (&quot;percent&quot; in question.lower() or &quot;percentage&quot; in question.lower()):
+            v = primary.metadata[&quot;demo_arithmetic&quot;]
+            expr = f&quot;({v['later']}-{v['earlier']})/{v['earlier']}*100&quot;
+            result = self.registry.call(&quot;calculator&quot;, expression=expr)
+            text = (f&quot;Revenue increased from ${v['earlier']:,.0f} million in {v['earlier_year']} &quot;
+                    f&quot;to ${v['later']:,.0f} million in {v['later_year']}, &quot;
+                    f&quot;a change of {result:.2f}% (calculated as {expr}).&quot;)
+            return {&quot;answer&quot;: text, &quot;source_ids&quot;: [primary.doc_id],
+                    &quot;calculation&quot;: {&quot;expression&quot;: expr, &quot;value&quot;: result}, &quot;abstained&quot;: False}
+        if specialist == &quot;news&quot;:
+            chain = self.registry.call(&quot;news_chain&quot;, symbol=symbol)
+            if chain[&quot;items&quot;]:
+                return {&quot;answer&quot;: chain[&quot;summary&quot;],
+                        &quot;source_ids&quot;: [r[&quot;document&quot;].doc_id for r in chain[&quot;items&quot;][:3]],
+                        &quot;calculation&quot;: None, &quot;abstained&quot;: False}
+        if specialist == &quot;market&quot;:
+            quote = self.registry.call(&quot;quote_lookup&quot;, symbol=symbol)
+            if quote:
+                return {&quot;answer&quot;: f&quot;Reference market snapshot: {quote} (offline snapshot; not live pricing).&quot;,
+                        &quot;source_ids&quot;: [f&quot;snapshot-{symbol}&quot;], &quot;calculation&quot;: None,
+                        &quot;abstained&quot;: False}
+        # An extractive fallback can present evidence, but MUST NOT invent computed answers.
+        return {&quot;answer&quot;: f&quot;Evidence retrieved; numerical conclusion not independently verified: &quot;
+                          f&quot;{primary.content[:250]}&quot;,
+                &quot;source_ids&quot;: [primary.doc_id], &quot;calculation&quot;: None, &quot;abstained&quot;: False}
+
+    @staticmethod
+    def evaluate(question: str, answer: Dict[str, Any], hits: List[Dict[str, Any]]) -&gt; Dict[str, Any]:
+        if answer[&quot;abstained&quot;]:
+            return {&quot;score&quot;: 0.5, &quot;passed&quot;: False,
+                    &quot;feedback&quot;: &quot;No supported answer; retrieve more evidence or request review.&quot;}
+        valid_ids = {row[&quot;document&quot;].doc_id for row in hits}
+        cited_ids = set(answer.get(&quot;source_ids&quot;, []))
+        citation_ok = bool(cited_ids) and cited_ids.issubset(valid_ids.union(
+            {f&quot;snapshot-{d['document'].symbol}&quot; for d in hits}))
+        calculation = answer.get(&quot;calculation&quot;)
+        arithmetic_ok = True
+        if calculation:
+            try:
+                recomputed = safe_calculate(calculation[&quot;expression&quot;])
+                arithmetic_ok = math.isclose(recomputed, calculation[&quot;value&quot;], abs_tol=1e-6)
+            except (ValueError, SyntaxError, ZeroDivisionError):
+                arithmetic_ok = False
+        # Requirements requiring numeric results are not passed by mere quoting.
+        numeric_question = bool(re.search(r&quot;\b(percentage|percent|how much|ratio|change)\b&quot;, question, re.I))
+        numeric_ok = not numeric_question or calculation is not None
+        supported = bool(citation_ok and arithmetic_ok and numeric_ok)
+        score = (int(citation_ok) + int(arithmetic_ok) + int(bool(numeric_ok))) / 3
+        feedback = &quot;Evidence checks passed.&quot; if supported else (
+            &quot;Check citations, verified arithmetic, and question coverage before relying on the answer.&quot;)
+        return {&quot;score&quot;: round(score, 3), &quot;passed&quot;: supported, &quot;feedback&quot;: feedback,
+                &quot;citation_ok&quot;: citation_ok, &quot;arithmetic_ok&quot;: arithmetic_ok,
+                &quot;numeric_coverage_ok&quot;: bool(numeric_ok)}
+
+    def run(self, symbol: str, question: str, top_k=3) -&gt; Dict[str, Any]:
+        &quot;&quot;&quot;Plan -&gt; use retrieved tools -&gt; route -&gt; evaluate -&gt; refine -&gt; store feedback.
+
+        Note: evaluation is a structural check, not a guarantee of factual truth.
+        &quot;&quot;&quot;
+        event_start = len(self.registry.events)
+        specialist = detect_specialist(question)
+        notes_before = self.memory.recall(symbol)
+        steps = self.plan(symbol, question, specialist, notes_before)
+        effective_k = min(6, top_k + 2) if any(n.get(&quot;outcome&quot;) == &quot;review_needed&quot; for n in notes_before) else top_k
+        steps.append(f&quot;Select retrieval depth: top-{effective_k} based on prior review notes&quot;)
+        hits = self.registry.call(&quot;retrieve&quot;, query=question, symbol=symbol,
+                                  top_k=effective_k,
+                                  kind=&quot;news&quot; if specialist == &quot;news&quot; else
+                                  (&quot;market&quot; if specialist == &quot;market&quot; else &quot;earnings&quot;))
+        routed_trace = None
+        if specialist == &quot;news&quot;:
+            routed_trace = self.registry.call(&quot;news_chain&quot;, symbol=symbol)[&quot;trace&quot;]
+        elif specialist == &quot;market&quot;:
+            quote = self.registry.call(&quot;quote_lookup&quot;, symbol=symbol)
+            if quote is not None:
+                steps.append(&quot;Use reference market snapshot tool&quot;)
+        draft = self._evidence_answer(question, hits, specialist, symbol)
+        initial_eval = self.evaluate(question, draft, hits)
+        iteration_trace = [{&quot;iteration&quot;: 1, &quot;feedback&quot;: initial_eval[&quot;feedback&quot;],
+                            &quot;score&quot;: initial_eval[&quot;score&quot;]}]
+        current = draft
+        current_eval = initial_eval
+        if not initial_eval[&quot;passed&quot;]:
+            wider_hits = self.registry.call(&quot;retrieve&quot;, query=question, symbol=symbol,
+                                           top_k=min(6, max(effective_k + 2, 4)),
+                                           kind=&quot;news&quot; if specialist == &quot;news&quot; else
+                                           (&quot;market&quot; if specialist == &quot;market&quot; else &quot;earnings&quot;))
+            if wider_hits:
+                hits = wider_hits
+                new_answer = self._evidence_answer(question, hits, specialist, symbol)
+                new_eval = self.evaluate(question, new_answer, hits)
+                iteration_trace.append({&quot;iteration&quot;: 2, &quot;feedback&quot;: new_eval[&quot;feedback&quot;],
+                                        &quot;score&quot;: new_eval[&quot;score&quot;]})
+                if new_eval[&quot;score&quot;] &gt;= current_eval[&quot;score&quot;]:
+                    current, current_eval = new_answer, new_eval
+        self.memory.store(symbol, specialist,
+                          &quot;passed&quot; if current_eval[&quot;passed&quot;] else &quot;review_needed&quot;,
+                          current_eval[&quot;feedback&quot;])
+        return {
+            &quot;symbol&quot;: symbol, &quot;question&quot;: question, &quot;specialist&quot;: specialist,
+            &quot;plan&quot;: steps, &quot;backend&quot;: &quot;local_hf_llm&quot; if self.llm else &quot;offline_extract&quot;,
+            &quot;retrieved&quot;: [{&quot;id&quot;: x[&quot;document&quot;].doc_id, &quot;score&quot;: round(x[&quot;score&quot;], 4),
+                           &quot;kind&quot;: x[&quot;document&quot;].kind, &quot;source&quot;: x[&quot;document&quot;].source}
+                          for x in hits],
+            &quot;answer&quot;: current[&quot;answer&quot;], &quot;source_ids&quot;: current[&quot;source_ids&quot;],
+            &quot;evaluation&quot;: current_eval, &quot;iterations&quot;: iteration_trace,
+            &quot;memory_before&quot;: notes_before, &quot;memory_after&quot;: self.memory.recall(symbol),
+            &quot;news_chain&quot;: routed_trace,
+            &quot;tool_trace&quot;: [e.__dict__ for e in self.registry.events[event_start:]],
+        }</code></pre><div class="outputs"></div></section>
+<section class="md"><h3>10. FinQA Integration, Evaluation and Optional Market API</h3>
+
+<p>Real dataset records are transformed into report passages that include text <strong>and financial tables</strong>. Their gold answers and executable programs are never placed in the retrieved documents. The official dev split is used as a small transparent case study, with 100 records in the recorded run.</p>
+
+<p>Retrieval and answer metrics are separately computed: source-record <strong>hit@k</strong>, <strong>MRR@k</strong>, approximate numeric answer match, and abstention. These instructional diagnostics are <strong>not</strong> the official FinQA benchmark protocol. The recorded retrieval metrics cover 30 questions; numerical generation metrics cover eight questions.</p></section>
+<section class="cell"><div class="cellnum">Code cell 21 · execution 10</div><pre class="codeblock"><code>def finqa_to_document(row: Dict[str, Any], split=&quot;unknown&quot;) -&gt; ResearchDocument:
+    &quot;&quot;&quot;Convert one official FinQA JSON record to a document, excluding ground truth answers.&quot;&quot;&quot;
+    table = row.get(&quot;table&quot;) or []
+    table_lines = [&quot; | &quot;.join(map(str, r)) if isinstance(r, list) else str(r)
+                   for r in table]
+    pre = row.get(&quot;pre_text&quot;) or []
+    post = row.get(&quot;post_text&quot;) or []
+    chunks = [&quot;PRE-TABLE: &quot; + &quot; &quot;.join(map(str, pre)),
+              &quot;FINANCIAL TABLE:\n&quot; + &quot;\n&quot;.join(table_lines),
+              &quot;POST-TABLE: &quot; + &quot; &quot;.join(map(str, post))]
+    ident = str(row.get(&quot;id&quot;) or hashlib.sha256(json.dumps(row, sort_keys=True).encode()).hexdigest()[:14])
+    return ResearchDocument(doc_id=ident, symbol=&quot;FINQA&quot;, kind=&quot;earnings&quot;,
+                            title=&quot;FinQA report extract &quot; + ident,
+                            content=&quot;\n&quot;.join(chunks), source=f&quot;FinQA {split} (Chen et al., 2021)&quot;,
+                            metadata={&quot;split&quot;: split})
+
+def fetch_finqa(split=&quot;dev&quot;, limit=200, timeout=30) -&gt; tuple:
+    &quot;&quot;&quot;Download original public FinQA JSON from the project repository.
+
+    Separates the gold Q/A examples from retrieval passages, preventing leakage.
+    &quot;&quot;&quot;
+    import requests
+    if split not in (&quot;train&quot;, &quot;dev&quot;, &quot;test&quot;):
+        raise ValueError(&quot;split must be train/dev/test&quot;)
+    url = f&quot;https://raw.githubusercontent.com/czyssrs/FinQA/main/dataset/{split}.json&quot;
+    response = requests.get(url, timeout=timeout)
+    response.raise_for_status()
+    raw = response.json()
+    rows = raw[:limit]
+    docs = [finqa_to_document(row, split=split) for row in rows]
+    queries = [{&quot;id&quot;: str(row.get(&quot;id&quot;)), &quot;question&quot;: row.get(&quot;qa&quot;, {}).get(&quot;question&quot;, &quot;&quot;),
+                &quot;gold_answer&quot;: row.get(&quot;qa&quot;, {}).get(&quot;exe_ans&quot;),
+                &quot;gold_program&quot;: row.get(&quot;qa&quot;, {}).get(&quot;program&quot;),
+                &quot;doc_id&quot;: docs[i].doc_id}
+               for i, row in enumerate(rows)]
+    return docs, queries, {&quot;source_url&quot;: url, &quot;split&quot;: split,
+                           &quot;subset&quot;: len(rows), &quot;note&quot;: &quot;Contiguous subset for lab runtime, not full benchmark&quot;}
+
+def retrieval_metrics(retriever: SemanticRetriever, queries: List[Dict[str, Any]], k=3):
+    &quot;&quot;&quot;Evaluate whether source report appears in top-k, not generation correctness.&quot;&quot;&quot;
+    hits, reciprocal = [], []
+    for row in queries:
+        ranked = retriever.retrieve(row[&quot;question&quot;], top_k=k, symbol=&quot;FINQA&quot;)
+        ids = [x[&quot;document&quot;].doc_id for x in ranked]
+        target = row[&quot;doc_id&quot;]
+        hits.append(int(target in ids))
+        reciprocal.append(1.0 / (ids.index(target) + 1) if target in ids else 0.0)
+    return {&quot;num_questions&quot;: len(queries), f&quot;hit_at_{k}&quot;: sum(hits) / max(1,len(hits)),
+            f&quot;mrr_at_{k}&quot;: sum(reciprocal) / max(1,len(reciprocal))}
+
+def normalize_numeric_answer(answer: Any) -&gt; Optional[float]:
+    &quot;&quot;&quot;Parse a numeric final answer; percentages remain numerical percent values.&quot;&quot;&quot;
+    if answer is None:
+        return None
+    text = str(answer).lower().replace(&quot;,&quot;, &quot;&quot;).replace(&quot;$&quot;, &quot;&quot;).strip()
+    match = re.search(r&quot;[-+]?\d+(?:\.\d+)?&quot;, text)
+    return float(match.group()) if match else None
+
+def finqa_answer_accuracy(results: List[Dict[str, Any]], queries: List[Dict[str, Any]],
+                          tolerance: float = 0.02) -&gt; Dict[str, Any]:
+    &quot;&quot;&quot;Simple numeric accuracy on aligned samples; this is NOT official FinQA evaluation.&quot;&quot;&quot;
+    n = min(len(results), len(queries))
+    matched = 0
+    abstained = 0
+    details = []
+    for prediction, gold in zip(results[:n], queries[:n]):
+        raw = str(prediction.get(&quot;answer&quot;, &quot;&quot;))
+        pred = normalize_numeric_answer(raw)
+        target = normalize_numeric_answer(gold.get(&quot;gold_answer&quot;))
+        correct = bool(pred is not None and target is not None and
+                       math.isclose(pred, target, rel_tol=tolerance, abs_tol=tolerance))
+        abstain = &quot;insufficient evidence&quot; in raw.lower()
+        matched += int(correct)
+        abstained += int(abstain)
+        details.append({&quot;id&quot;: gold.get(&quot;id&quot;), &quot;predicted&quot;: pred,
+                        &quot;gold&quot;: target, &quot;correct&quot;: correct, &quot;abstained&quot;: abstain})
+    return {&quot;n&quot;: n, &quot;numeric_accuracy&quot;: matched / max(1,n),
+            &quot;abstention_rate&quot;: abstained/max(1,n), &quot;details&quot;: details}
+
+def fetch_yahoo_snapshot(symbol: str) -&gt; Optional[Dict[str, Any]]:
+    &quot;&quot;&quot;Optional read-only live market tool; no trading or brokerage access.&quot;&quot;&quot;
+    import yfinance as yf
+    ticker = yf.Ticker(symbol)
+    hist = ticker.history(period=&quot;5d&quot;, auto_adjust=False)
+    if hist.empty:
+        return None
+    latest = hist.iloc[-1]
+    return {&quot;price&quot;: round(float(latest[&quot;Close&quot;]), 4),
+            &quot;volume&quot;: int(latest[&quot;Volume&quot;]),
+            &quot;as_of&quot;: str(hist.index[-1]), &quot;source&quot;: &quot;Yahoo Finance via yfinance&quot;,
+            &quot;note&quot;: &quot;May be delayed; informational only&quot;}</code></pre><div class="outputs"></div></section>
+<section class="md"><h3>11. Executable Offline Demonstration — Labeled Synthetic Data</h3>
+
+<p>This four-record example models a fictional company <strong>DEMO</strong>, solely so that the complete agent loop can be executed and documented in a restricted classroom runtime. The $200m and $250m revenue figures, company news, and $52.30 snapshot are invented teaching inputs, <strong>not real financial market facts</strong>.</p></section>
+<section class="cell"><div class="cellnum">Code cell 23 · execution 11</div><pre class="codeblock"><code>def demo_documents() -&gt; List[ResearchDocument]:
+    &quot;&quot;&quot;Small clearly synthetic dataset for reproducible architecture tests.&quot;&quot;&quot;
+    return [
+        ResearchDocument(&quot;DEMO-10K-2024&quot;, &quot;DEMO&quot;, &quot;earnings&quot;, &quot;DEMO hypothetical revenue filing&quot;,
+            &quot;DEMO Corporation reported revenue of $200 million in 2023 and $250 million in 2024. &quot;
+            &quot;Operating costs were $150 million in 2024. This is fictional educational data.&quot;,
+            &quot;Synthetic classroom filing&quot;, &quot;2024-12-31&quot;,
+            {&quot;demo_arithmetic&quot;: {&quot;earlier&quot;: 200, &quot;later&quot;: 250,
+                                 &quot;earlier_year&quot;: 2023, &quot;later_year&quot;: 2024}}),
+        ResearchDocument(&quot;DEMO-N-1&quot;, &quot;DEMO&quot;, &quot;news&quot;, &quot;DEMO announces new plant&quot;,
+            &quot;DEMO Corporation announced a proposed $20 million expansion for a new plant. &quot;
+            &quot;Management expects construction to begin next year.&quot;,
+            &quot;Synthetic news release&quot;, &quot;2025-01-11&quot;),
+        ResearchDocument(&quot;DEMO-N-2&quot;, &quot;DEMO&quot;, &quot;news&quot;, &quot;DEMO quarterly earnings update&quot;,
+            &quot;DEMO Corporation reported 5% higher quarterly revenue in its illustrative update.&quot;,
+            &quot;Synthetic classroom news&quot;, &quot;2025-02-14&quot;),
+        ResearchDocument(&quot;DEMO-M-1&quot;, &quot;DEMO&quot;, &quot;market&quot;, &quot;DEMO reference market quote&quot;,
+            &quot;The illustrative quote for DEMO was $52.30 on a fictional reference date; &quot;
+            &quot;this is not an actual traded stock.&quot;,
+            &quot;Synthetic market snapshot&quot;, &quot;2025-02-14&quot;),
+    ]</code></pre><div class="outputs"></div></section>
+<section class="cell"><div class="cellnum">Code cell 24 · execution 12</div><pre class="codeblock"><code>import tempfile
+import pandas as pd
+from IPython.display import display
+
+# Use a temporary directory so repeated notebook runs start from the same state.
+_demo_session = tempfile.TemporaryDirectory()
+agent = InvestmentResearchAgent(
+    documents=demo_documents(),
+    memory_path=str(Path(_demo_session.name) / &quot;finsight_notes.json&quot;),
+    quotes={&quot;DEMO&quot;: {&quot;price&quot;: 52.30, &quot;currency&quot;: &quot;USD&quot;,
+                     &quot;as_of&quot;: &quot;FICTIONAL / NOT LIVE&quot;}},
+)
+
+print(&quot;Retrieval baseline:&quot;, agent.retriever.backend)
+print(&quot;Documents:&quot;)
+display(pd.DataFrame([{
+    &quot;ID&quot;: d.doc_id, &quot;Category&quot;: d.kind, &quot;Source&quot;: d.source,
+    &quot;Published&quot;: d.published} for d in agent.documents]))</code></pre><div class="outputs"><pre class="out">Retrieval baseline: tfidf
+Documents:
+</pre>
+<div class="pandas">
+  <div id="df-b8b8ae67-e91a-4f64-937c-cea37fa4ad32" class="colab-df-container">
+    <div>
+<style scoped>
+    .dataframe tbody tr th:only-of-type {
+        vertical-align: middle;
+    }
+
+    .dataframe tbody tr th {
+        vertical-align: top;
+    }
+
+    .dataframe thead th {
+        text-align: right;
+    }
+</style>
+<table border="1" class="dataframe">
+  <thead>
+    <tr style="text-align: right;">
+      <th></th>
+      <th>ID</th>
+      <th>Category</th>
+      <th>Source</th>
+      <th>Published</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <th>0</th>
+      <td>DEMO-10K-2024</td>
+      <td>earnings</td>
+      <td>Synthetic classroom filing</td>
+      <td>2024-12-31</td>
+    </tr>
+    <tr>
+      <th>1</th>
+      <td>DEMO-N-1</td>
+      <td>news</td>
+      <td>Synthetic news release</td>
+      <td>2025-01-11</td>
+    </tr>
+    <tr>
+      <th>2</th>
+      <td>DEMO-N-2</td>
+      <td>news</td>
+      <td>Synthetic classroom news</td>
+      <td>2025-02-14</td>
+    </tr>
+    <tr>
+      <th>3</th>
+      <td>DEMO-M-1</td>
+      <td>market</td>
+      <td>Synthetic market snapshot</td>
+      <td>2025-02-14</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+    <div class="colab-df-buttons">
+
+  <div class="colab-df-container">
+    <button class="colab-df-convert" onclick="convertToInteractive('df-b8b8ae67-e91a-4f64-937c-cea37fa4ad32')"
+            title="Convert this dataframe to an interactive table."
+            style="display:none;">
+
+  <svg xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 -960 960 960">
+    <path d="M120-120v-720h720v720H120Zm60-500h600v-160H180v160Zm220 220h160v-160H400v160Zm0 220h160v-160H400v160ZM180-400h160v-160H180v160Zm440 0h160v-160H620v160ZM180-180h160v-160H180v160Zm440 0h160v-160H620v160Z"/>
+  </svg>
+    </button>
+
+  <style>
+    .colab-df-container {
+      display:flex;
+      gap: 12px;
+    }
+
+    .colab-df-convert {
+      background-color: #E8F0FE;
+      border: none;
+      border-radius: 50%;
+      cursor: pointer;
+      display: none;
+      fill: #1967D2;
+      height: 32px;
+      padding: 0 0 0 0;
+      width: 32px;
+    }
+
+    .colab-df-convert:hover {
+      background-color: #E2EBFA;
+      box-shadow: 0px 1px 2px rgba(60, 64, 67, 0.3), 0px 1px 3px 1px rgba(60, 64, 67, 0.15);
+      fill: #174EA6;
+    }
+
+    .colab-df-buttons div {
+      margin-bottom: 4px;
+    }
+
+    [theme=dark] .colab-df-convert {
+      background-color: #3B4455;
+      fill: #D2E3FC;
+    }
+
+    [theme=dark] .colab-df-convert:hover {
+      background-color: #434B5C;
+      box-shadow: 0px 1px 3px 1px rgba(0, 0, 0, 0.15);
+      filter: drop-shadow(0px 1px 2px rgba(0, 0, 0, 0.3));
+      fill: #FFFFFF;
+    }
+  </style>
+
+    <script>
+      const buttonEl =
+        document.querySelector('#df-b8b8ae67-e91a-4f64-937c-cea37fa4ad32 button.colab-df-convert');
+      buttonEl.style.display =
+        google.colab.kernel.accessAllowed ? 'block' : 'none';
+
+      async function convertToInteractive(key) {
+        const element = document.querySelector('#df-b8b8ae67-e91a-4f64-937c-cea37fa4ad32');
+        const dataTable =
+          await google.colab.kernel.invokeFunction('convertToInteractive',
+                                                    [key], {});
+        if (!dataTable) return;
+
+        const docLinkHtml = 'Like what you see? Visit the ' +
+          '<a target="_blank" href=https://colab.research.google.com/notebooks/data_table.ipynb>data table notebook</a>'
+          + ' to learn more about interactive tables.';
+        element.innerHTML = '';
+        dataTable['output_type'] = 'display_data';
+        await google.colab.output.renderOutput(dataTable, element);
+        const docLink = document.createElement('div');
+        docLink.innerHTML = docLinkHtml;
+        element.appendChild(docLink);
+      }
+    </script>
+  </div>
+
+
+    </div>
+  </div>
+</div></div></section>
+<section class="md"><h4>11.1 Planner, Specialist Routing, Dynamic Tools and Verification</h4>
+
+<p>We ask four questions: a multi-year revenue percentage calculation, a news summary, a market snapshot and an unsupported CEO question. The last case demonstrates abstention and the second evaluator iteration.</p></section>
+<section class="cell"><div class="cellnum">Code cell 26 · execution 13</div><pre class="codeblock"><code>demo_questions = [
+    &quot;What was the percentage change in revenue from 2023 to 2024?&quot;,
+    &quot;Summarize the company news announcements&quot;,
+    &quot;What is the stock price?&quot;,
+    &quot;What are the CEO qualifications?&quot;,
+]
+
+demo_runs = [agent.run(&quot;DEMO&quot;, q, top_k=2) for q in demo_questions]
+rows = [{
+    &quot;Question&quot;: r[&quot;question&quot;],
+    &quot;Route&quot;: r[&quot;specialist&quot;],
+    &quot;Answer&quot;: r[&quot;answer&quot;],
+    &quot;Checker Pass&quot;: r[&quot;evaluation&quot;][&quot;passed&quot;],
+    &quot;Iterations&quot;: len(r[&quot;iterations&quot;]),
+    &quot;Tools Called&quot;: len(r[&quot;tool_trace&quot;]),
+} for r in demo_runs]
+
+display(pd.DataFrame(rows))
+assert &quot;25.00%&quot; in demo_runs[0][&quot;answer&quot;]
+assert demo_runs[0][&quot;evaluation&quot;][&quot;passed&quot;]
+assert demo_runs[1][&quot;specialist&quot;] == &quot;news&quot;
+assert demo_runs[2][&quot;specialist&quot;] == &quot;market&quot;
+assert demo_runs[3][&quot;evaluation&quot;][&quot;passed&quot;] is False
+print(&quot;\nSynthetic exercise correctness checks: PASS&quot;)</code></pre><div class="outputs"><div class="pandas">
+  <div id="df-cd4a1b16-0cf7-40c9-89bd-1d1c55bfaed1" class="colab-df-container">
+    <div>
+<style scoped>
+    .dataframe tbody tr th:only-of-type {
+        vertical-align: middle;
+    }
+
+    .dataframe tbody tr th {
+        vertical-align: top;
+    }
+
+    .dataframe thead th {
+        text-align: right;
+    }
+</style>
+<table border="1" class="dataframe">
+  <thead>
+    <tr style="text-align: right;">
+      <th></th>
+      <th>Question</th>
+      <th>Route</th>
+      <th>Answer</th>
+      <th>Checker Pass</th>
+      <th>Iterations</th>
+      <th>Tools Called</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <th>0</th>
+      <td>What was the percentage change in revenue from...</td>
+      <td>earnings</td>
+      <td>Revenue increased from $200 million in 2023 to...</td>
+      <td>True</td>
+      <td>1</td>
+      <td>2</td>
+    </tr>
+    <tr>
+      <th>1</th>
+      <td>Summarize the company news announcements</td>
+      <td>news</td>
+      <td>[DEMO-N-1] DEMO announces new plant: DEMO Corp...</td>
+      <td>True</td>
+      <td>1</td>
+      <td>3</td>
+    </tr>
+    <tr>
+      <th>2</th>
+      <td>What is the stock price?</td>
+      <td>market</td>
+      <td>Reference market snapshot: {'price': 52.3, 'cu...</td>
+      <td>True</td>
+      <td>1</td>
+      <td>3</td>
+    </tr>
+    <tr>
+      <th>3</th>
+      <td>What are the CEO qualifications?</td>
+      <td>earnings</td>
+      <td>Insufficient evidence in the available sources.</td>
+      <td>False</td>
+      <td>2</td>
+      <td>2</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+    <div class="colab-df-buttons">
+
+  <div class="colab-df-container">
+    <button class="colab-df-convert" onclick="convertToInteractive('df-cd4a1b16-0cf7-40c9-89bd-1d1c55bfaed1')"
+            title="Convert this dataframe to an interactive table."
+            style="display:none;">
+
+  <svg xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 -960 960 960">
+    <path d="M120-120v-720h720v720H120Zm60-500h600v-160H180v160Zm220 220h160v-160H400v160Zm0 220h160v-160H400v160ZM180-400h160v-160H180v160Zm440 0h160v-160H620v160ZM180-180h160v-160H180v160Zm440 0h160v-160H620v160Z"/>
+  </svg>
+    </button>
+
+  <style>
+    .colab-df-container {
+      display:flex;
+      gap: 12px;
+    }
+
+    .colab-df-convert {
+      background-color: #E8F0FE;
+      border: none;
+      border-radius: 50%;
+      cursor: pointer;
+      display: none;
+      fill: #1967D2;
+      height: 32px;
+      padding: 0 0 0 0;
+      width: 32px;
+    }
+
+    .colab-df-convert:hover {
+      background-color: #E2EBFA;
+      box-shadow: 0px 1px 2px rgba(60, 64, 67, 0.3), 0px 1px 3px 1px rgba(60, 64, 67, 0.15);
+      fill: #174EA6;
+    }
+
+    .colab-df-buttons div {
+      margin-bottom: 4px;
+    }
+
+    [theme=dark] .colab-df-convert {
+      background-color: #3B4455;
+      fill: #D2E3FC;
+    }
+
+    [theme=dark] .colab-df-convert:hover {
+      background-color: #434B5C;
+      box-shadow: 0px 1px 3px 1px rgba(0, 0, 0, 0.15);
+      filter: drop-shadow(0px 1px 2px rgba(0, 0, 0, 0.3));
+      fill: #FFFFFF;
+    }
+  </style>
+
+    <script>
+      const buttonEl =
+        document.querySelector('#df-cd4a1b16-0cf7-40c9-89bd-1d1c55bfaed1 button.colab-df-convert');
+      buttonEl.style.display =
+        google.colab.kernel.accessAllowed ? 'block' : 'none';
+
+      async function convertToInteractive(key) {
+        const element = document.querySelector('#df-cd4a1b16-0cf7-40c9-89bd-1d1c55bfaed1');
+        const dataTable =
+          await google.colab.kernel.invokeFunction('convertToInteractive',
+                                                    [key], {});
+        if (!dataTable) return;
+
+        const docLinkHtml = 'Like what you see? Visit the ' +
+          '<a target="_blank" href=https://colab.research.google.com/notebooks/data_table.ipynb>data table notebook</a>'
+          + ' to learn more about interactive tables.';
+        element.innerHTML = '';
+        dataTable['output_type'] = 'display_data';
+        await google.colab.output.renderOutput(dataTable, element);
+        const docLink = document.createElement('div');
+        docLink.innerHTML = docLinkHtml;
+        element.appendChild(docLink);
+      }
+    </script>
+  </div>
+
+
+    </div>
+  </div>
+</div>
+<pre class="out">
+Synthetic exercise correctness checks: PASS
+</pre></div></section>
+<section class="md"><h4>11.2 Evidence Provenance, Agent Plans and Tool-Use Audit</h4>
+
+<p>The next output is a trace of <em>actual tool calls in this execution</em>, not a hand-written fictional tool trace. It enables graders to inspect which tools were called and why.</p></section>
+<section class="cell"><div class="cellnum">Code cell 28 · execution 14</div><pre class="codeblock"><code>for result in demo_runs:
+    print(&quot;\n&quot; + &quot;=&quot; * 75)
+    print(&quot;QUERY:&quot;, result[&quot;question&quot;])
+    print(&quot;SPECIALIST:&quot;, result[&quot;specialist&quot;])
+    print(&quot;PLAN:&quot;)
+    for step in result[&quot;plan&quot;]:
+        print(&quot; -&quot;, step)
+    print(&quot;RETRIEVED EVIDENCE IDs:&quot;, [x[&quot;id&quot;] for x in result[&quot;retrieved&quot;]])
+    print(&quot;CITED SOURCES:&quot;, result[&quot;source_ids&quot;])
+    print(&quot;TOOL INVOCATIONS:&quot;, [x[&quot;tool&quot;] for x in result[&quot;tool_trace&quot;]])
+    print(&quot;REVIEW/OPTIMIZER:&quot;, result[&quot;iterations&quot;])
+    print(&quot;MEMORY NOTES SAVED:&quot;, result[&quot;memory_after&quot;][-1:])</code></pre><div class="outputs"><pre class="out">
+===========================================================================
+QUERY: What was the percentage change in revenue from 2023 to 2024?
+SPECIALIST: earnings
+PLAN:
+ - Classify task and route to earnings specialist
+ - Retrieve grounded evidence for DEMO and question
+ - Extract relevant numerical facts and consult tools if needed
+ - Generate concise answer with explicit evidence identifiers
+ - Evaluate grounding, question coverage, and arithmetic consistency
+ - Refine once on failure; retain short feedback memory
+ - Select retrieval depth: top-2 based on prior review notes
+RETRIEVED EVIDENCE IDs: ['DEMO-10K-2024']
+CITED SOURCES: ['DEMO-10K-2024']
+TOOL INVOCATIONS: ['retrieve', 'calculator']
+REVIEW/OPTIMIZER: [{'iteration': 1, 'feedback': 'Evidence checks passed.', 'score': 1.0}]
+MEMORY NOTES SAVED: [{'time': '2026-10-18T19:52:14+00:00', 'specialist': 'earnings', 'outcome': 'passed', 'feedback': 'Evidence checks passed.'}]
+
+===========================================================================
+QUERY: Summarize the company news announcements
+SPECIALIST: news
+PLAN:
+ - Classify task and route to news specialist
+ - Retrieve grounded evidence for DEMO and question
+ - Extract relevant numerical facts and consult tools if needed
+ - Generate concise answer with explicit evidence identifiers
+ - Evaluate grounding, question coverage, and arithmetic consistency
+ - Use previous feedback notes to improve result
+ - Refine once on failure; retain short feedback memory
+ - Select retrieval depth: top-2 based on prior review notes
+RETRIEVED EVIDENCE IDs: ['DEMO-N-1', 'DEMO-N-2']
+CITED SOURCES: ['DEMO-N-1', 'DEMO-N-2']
+TOOL INVOCATIONS: ['retrieve', 'news_chain', 'news_chain']
+REVIEW/OPTIMIZER: [{'iteration': 1, 'feedback': 'Evidence checks passed.', 'score': 1.0}]
+MEMORY NOTES SAVED: [{'time': '2026-10-18T19:52:14+00:00', 'specialist': 'news', 'outcome': 'passed', 'feedback': 'Evidence checks passed.'}]
+
+===========================================================================
+QUERY: What is the stock price?
+SPECIALIST: market
+PLAN:
+ - Classify task and route to market specialist
+ - Retrieve grounded evidence for DEMO and question
+ - Extract relevant numerical facts and consult tools if needed
+ - Generate concise answer with explicit evidence identifiers
+ - Evaluate grounding, question coverage, and arithmetic consistency
+ - Use previous feedback notes to improve result
+ - Refine once on failure; retain short feedback memory
+ - Select retrieval depth: top-2 based on prior review notes
+ - Use reference market snapshot tool
+RETRIEVED EVIDENCE IDs: ['DEMO-M-1']
+CITED SOURCES: ['snapshot-DEMO']
+TOOL INVOCATIONS: ['retrieve', 'quote_lookup', 'quote_lookup']
+REVIEW/OPTIMIZER: [{'iteration': 1, 'feedback': 'Evidence checks passed.', 'score': 1.0}]
+MEMORY NOTES SAVED: [{'time': '2026-10-18T19:52:14+00:00', 'specialist': 'market', 'outcome': 'passed', 'feedback': 'Evidence checks passed.'}]
+
+===========================================================================
+QUERY: What are the CEO qualifications?
+SPECIALIST: earnings
+PLAN:
+ - Classify task and route to earnings specialist
+ - Retrieve grounded evidence for DEMO and question
+ - Extract relevant numerical facts and consult tools if needed
+ - Generate concise answer with explicit evidence identifiers
+ - Evaluate grounding, question coverage, and arithmetic consistency
+ - Use previous feedback notes to improve result
+ - Refine once on failure; retain short feedback memory
+ - Select retrieval depth: top-2 based on prior review notes
+RETRIEVED EVIDENCE IDs: ['DEMO-10K-2024']
+CITED SOURCES: []
+TOOL INVOCATIONS: ['retrieve', 'retrieve']
+REVIEW/OPTIMIZER: [{'iteration': 1, 'feedback': 'No supported answer; retrieve more evidence or request review.', 'score': 0.5}, {'iteration': 2, 'feedback': 'No supported answer; retrieve more evidence or request review.', 'score': 0.5}]
+MEMORY NOTES SAVED: [{'time': '2026-10-18T19:52:14+00:00', 'specialist': 'earnings', 'outcome': 'review_needed', 'feedback': 'No supported answer; retrieve more evidence or request review.'}]
+</pre></div></section>
+<section class="md"><h4>11.3 Prompt Chaining Output and Trace</h4></section>
+<section class="cell"><div class="cellnum">Code cell 30 · execution 15</div><pre class="codeblock"><code>news_run = news_prompt_chain(demo_documents())
+print(&quot;Actual stage trace:&quot;)
+display(pd.DataFrame(news_run[&quot;trace&quot;]))
+print(&quot;\nExtracted news facts:&quot;)
+display(pd.DataFrame([{
+    &quot;Document&quot;: x[&quot;document&quot;].doc_id,
+    &quot;Classification&quot;: x[&quot;category&quot;],
+    &quot;Extracted Figures&quot;: &quot;, &quot;.join(x[&quot;figures&quot;])
+} for x in news_run[&quot;items&quot;]]))
+print(&quot;\nSummary:\n&quot;, news_run[&quot;summary&quot;])
+assert [x[&quot;stage&quot;] for x in news_run[&quot;trace&quot;]] == [
+    &quot;Ingest News&quot;, &quot;Preprocess&quot;, &quot;Classify&quot;, &quot;Extract&quot;, &quot;Summarize&quot;]</code></pre><div class="outputs"><pre class="out">Actual stage trace:
+</pre>
+<div class="pandas">
+  <div id="df-5b1100be-161a-40db-9b1a-f7f649c02c2d" class="colab-df-container">
+    <div>
+<style scoped>
+    .dataframe tbody tr th:only-of-type {
+        vertical-align: middle;
+    }
+
+    .dataframe tbody tr th {
+        vertical-align: top;
+    }
+
+    .dataframe thead th {
+        text-align: right;
+    }
+</style>
+<table border="1" class="dataframe">
+  <thead>
+    <tr style="text-align: right;">
+      <th></th>
+      <th>stage</th>
+      <th>count</th>
+      <th>labels</th>
+      <th>figure_counts</th>
+      <th>chars</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <th>0</th>
+      <td>Ingest News</td>
+      <td>2.0</td>
+      <td>NaN</td>
+      <td>NaN</td>
+      <td>NaN</td>
+    </tr>
+    <tr>
+      <th>1</th>
+      <td>Preprocess</td>
+      <td>2.0</td>
+      <td>NaN</td>
+      <td>NaN</td>
+      <td>NaN</td>
+    </tr>
+    <tr>
+      <th>2</th>
+      <td>Classify</td>
+      <td>NaN</td>
+      <td>[general, earnings]</td>
+      <td>NaN</td>
+      <td>NaN</td>
+    </tr>
+    <tr>
+      <th>3</th>
+      <td>Extract</td>
+      <td>NaN</td>
+      <td>NaN</td>
+      <td>[1, 1]</td>
+      <td>NaN</td>
+    </tr>
+    <tr>
+      <th>4</th>
+      <td>Summarize</td>
+      <td>NaN</td>
+      <td>NaN</td>
+      <td>NaN</td>
+      <td>279.0</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+    <div class="colab-df-buttons">
+
+  <div class="colab-df-container">
+    <button class="colab-df-convert" onclick="convertToInteractive('df-5b1100be-161a-40db-9b1a-f7f649c02c2d')"
+            title="Convert this dataframe to an interactive table."
+            style="display:none;">
+
+  <svg xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 -960 960 960">
+    <path d="M120-120v-720h720v720H120Zm60-500h600v-160H180v160Zm220 220h160v-160H400v160Zm0 220h160v-160H400v160ZM180-400h160v-160H180v160Zm440 0h160v-160H620v160ZM180-180h160v-160H180v160Zm440 0h160v-160H620v160Z"/>
+  </svg>
+    </button>
+
+  <style>
+    .colab-df-container {
+      display:flex;
+      gap: 12px;
+    }
+
+    .colab-df-convert {
+      background-color: #E8F0FE;
+      border: none;
+      border-radius: 50%;
+      cursor: pointer;
+      display: none;
+      fill: #1967D2;
+      height: 32px;
+      padding: 0 0 0 0;
+      width: 32px;
+    }
+
+    .colab-df-convert:hover {
+      background-color: #E2EBFA;
+      box-shadow: 0px 1px 2px rgba(60, 64, 67, 0.3), 0px 1px 3px 1px rgba(60, 64, 67, 0.15);
+      fill: #174EA6;
+    }
+
+    .colab-df-buttons div {
+      margin-bottom: 4px;
+    }
+
+    [theme=dark] .colab-df-convert {
+      background-color: #3B4455;
+      fill: #D2E3FC;
+    }
+
+    [theme=dark] .colab-df-convert:hover {
+      background-color: #434B5C;
+      box-shadow: 0px 1px 3px 1px rgba(0, 0, 0, 0.15);
+      filter: drop-shadow(0px 1px 2px rgba(0, 0, 0, 0.3));
+      fill: #FFFFFF;
+    }
+  </style>
+
+    <script>
+      const buttonEl =
+        document.querySelector('#df-5b1100be-161a-40db-9b1a-f7f649c02c2d button.colab-df-convert');
+      buttonEl.style.display =
+        google.colab.kernel.accessAllowed ? 'block' : 'none';
+
+      async function convertToInteractive(key) {
+        const element = document.querySelector('#df-5b1100be-161a-40db-9b1a-f7f649c02c2d');
+        const dataTable =
+          await google.colab.kernel.invokeFunction('convertToInteractive',
+                                                    [key], {});
+        if (!dataTable) return;
+
+        const docLinkHtml = 'Like what you see? Visit the ' +
+          '<a target="_blank" href=https://colab.research.google.com/notebooks/data_table.ipynb>data table notebook</a>'
+          + ' to learn more about interactive tables.';
+        element.innerHTML = '';
+        dataTable['output_type'] = 'display_data';
+        await google.colab.output.renderOutput(dataTable, element);
+        const docLink = document.createElement('div');
+        docLink.innerHTML = docLinkHtml;
+        element.appendChild(docLink);
+      }
+    </script>
+  </div>
+
+
+    </div>
+  </div>
+</div>
+<pre class="out">
+Extracted news facts:
+</pre>
+<div class="pandas">
+  <div id="df-40aa6162-16c0-4a45-a0ca-9988c6d961f8" class="colab-df-container">
+    <div>
+<style scoped>
+    .dataframe tbody tr th:only-of-type {
+        vertical-align: middle;
+    }
+
+    .dataframe tbody tr th {
+        vertical-align: top;
+    }
+
+    .dataframe thead th {
+        text-align: right;
+    }
+</style>
+<table border="1" class="dataframe">
+  <thead>
+    <tr style="text-align: right;">
+      <th></th>
+      <th>Document</th>
+      <th>Classification</th>
+      <th>Extracted Figures</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <th>0</th>
+      <td>DEMO-N-1</td>
+      <td>general</td>
+      <td>$20 million</td>
+    </tr>
+    <tr>
+      <th>1</th>
+      <td>DEMO-N-2</td>
+      <td>earnings</td>
+      <td>5%</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+    <div class="colab-df-buttons">
+
+  <div class="colab-df-container">
+    <button class="colab-df-convert" onclick="convertToInteractive('df-40aa6162-16c0-4a45-a0ca-9988c6d961f8')"
+            title="Convert this dataframe to an interactive table."
+            style="display:none;">
+
+  <svg xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 -960 960 960">
+    <path d="M120-120v-720h720v720H120Zm60-500h600v-160H180v160Zm220 220h160v-160H400v160Zm0 220h160v-160H400v160ZM180-400h160v-160H180v160Zm440 0h160v-160H620v160ZM180-180h160v-160H180v160Zm440 0h160v-160H620v160Z"/>
+  </svg>
+    </button>
+
+  <style>
+    .colab-df-container {
+      display:flex;
+      gap: 12px;
+    }
+
+    .colab-df-convert {
+      background-color: #E8F0FE;
+      border: none;
+      border-radius: 50%;
+      cursor: pointer;
+      display: none;
+      fill: #1967D2;
+      height: 32px;
+      padding: 0 0 0 0;
+      width: 32px;
+    }
+
+    .colab-df-convert:hover {
+      background-color: #E2EBFA;
+      box-shadow: 0px 1px 2px rgba(60, 64, 67, 0.3), 0px 1px 3px 1px rgba(60, 64, 67, 0.15);
+      fill: #174EA6;
+    }
+
+    .colab-df-buttons div {
+      margin-bottom: 4px;
+    }
+
+    [theme=dark] .colab-df-convert {
+      background-color: #3B4455;
+      fill: #D2E3FC;
+    }
+
+    [theme=dark] .colab-df-convert:hover {
+      background-color: #434B5C;
+      box-shadow: 0px 1px 3px 1px rgba(0, 0, 0, 0.15);
+      filter: drop-shadow(0px 1px 2px rgba(0, 0, 0, 0.3));
+      fill: #FFFFFF;
+    }
+  </style>
+
+    <script>
+      const buttonEl =
+        document.querySelector('#df-40aa6162-16c0-4a45-a0ca-9988c6d961f8 button.colab-df-convert');
+      buttonEl.style.display =
+        google.colab.kernel.accessAllowed ? 'block' : 'none';
+
+      async function convertToInteractive(key) {
+        const element = document.querySelector('#df-40aa6162-16c0-4a45-a0ca-9988c6d961f8');
+        const dataTable =
+          await google.colab.kernel.invokeFunction('convertToInteractive',
+                                                    [key], {});
+        if (!dataTable) return;
+
+        const docLinkHtml = 'Like what you see? Visit the ' +
+          '<a target="_blank" href=https://colab.research.google.com/notebooks/data_table.ipynb>data table notebook</a>'
+          + ' to learn more about interactive tables.';
+        element.innerHTML = '';
+        dataTable['output_type'] = 'display_data';
+        await google.colab.output.renderOutput(dataTable, element);
+        const docLink = document.createElement('div');
+        docLink.innerHTML = docLinkHtml;
+        element.appendChild(docLink);
+      }
+    </script>
+  </div>
+
+
+    </div>
+  </div>
+</div>
+<pre class="out">
+Summary:
+ [DEMO-N-1] DEMO announces new plant: DEMO Corporation announced a proposed $20 million expansion for a new plant. (category: general)
+[DEMO-N-2] DEMO quarterly earnings update: DEMO Corporation reported 5% higher quarterly revenue in its illustrative update. (category: earnings)
+</pre></div></section>
+<section class="md"><h4>11.4 Evidence of Cross-Run Learning and Memory Adaptation</h4>
+
+<p>An initial unanswered question is repeated. The second run recalls the prior <code>review_needed</code> note and increases the retrieval search depth. It still abstains rather than fabricating the missing fact.</p></section>
+<section class="cell"><div class="cellnum">Code cell 32 · execution 16</div><pre class="codeblock"><code>repeat = agent.run(&quot;DEMO&quot;, &quot;What are the CEO qualifications?&quot;, top_k=1)
+print(&quot;Previous notes:&quot;, len(repeat[&quot;memory_before&quot;]))
+print(&quot;New plan:&quot;, [x for x in repeat[&quot;plan&quot;] if &quot;retrieval depth&quot; in x.lower()])
+print(&quot;Final response:&quot;, repeat[&quot;answer&quot;])
+print(&quot;Feedback memory path exists:&quot;, agent.memory.path.exists())
+assert repeat[&quot;memory_before&quot;]
+assert any(&quot;top-&quot; in step for step in repeat[&quot;plan&quot;])
+assert &quot;Insufficient evidence&quot; in repeat[&quot;answer&quot;]</code></pre><div class="outputs"><pre class="out">Previous notes: 3
+New plan: ['Select retrieval depth: top-3 based on prior review notes']
+Final response: Insufficient evidence in the available sources.
+Feedback memory path exists: True
+</pre></div></section>
+<section class="md"><h4>11.5 Agent Workflow Visualization (Observed Local Demo)</h4>
+
+<p>The values below come from the executed demonstration, not a fabricated financial benchmark. An evaluation failure on an unsupported question is desirable behavior.</p></section>
+<section class="cell"><div class="cellnum">Code cell 34 · execution 17</div><pre class="codeblock"><code>import matplotlib.pyplot as plt
+
+names = [&quot;Revenue math&quot;, &quot;News&quot;, &quot;Market&quot;, &quot;Unsupported&quot;]
+eval_scores = [r[&quot;evaluation&quot;][&quot;score&quot;] for r in demo_runs]
+fig, ax = plt.subplots(figsize=(8.5, 3.4))
+ax.bar(names, eval_scores)
+ax.set_ylim(0, 1.08)
+ax.set_ylabel(&quot;Structural evaluator score&quot;)
+ax.set_title(&quot;FinSight synthetic architecture: observed evaluation outcomes&quot;)
+for i, v in enumerate(eval_scores):
+    ax.text(i, min(v + 0.03, 1.05), f&quot;{v:.2f}&quot;, ha=&quot;center&quot;, fontsize=9)
+plt.tight_layout()
+plt.show()</code></pre><div class="outputs"><figure><img alt="Notebook plot" src="data:image/png;base64,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6m/evFm0b99e2NjYCD09PfHRRx+JIUOGiNu3b79239KHSSGEhu7XICKNSUhIQIMGDfDzzz+jf//+ZR2OJC8vD5UqVUKXLl1UngEgIiIiet/xmSOiMvbkyROVssjISGhpaSk9N/Au2L59O9LS0uDv71/WoRARERFpHJ85Iipjs2bNQlxcHFq3bg0dHR1pqNEvv/wSjo6OZR0eAOCvv/7C6dOnMXXqVDRo0ADe3t5lHRIRERGRxvG2OqIytm/fPoSHh+P8+fPIysrCRx99hC+++AITJkyQfqekrAUGBuLnn3+Gu7s7Vq1aVWo/AkpERERUmpgcERERERERgc8cERERERERAWByREREREREBOADHJChoKAAt27dgqmp6Rv/wCYREREREb0/hBB49OgRKlWqpPJD2S/64JKjW7duvTMjgBERERERUem5ceMGKleuXOz8Dy45MjU1BfB8x5iZmZVxNEREREREVNIyMzPh6Ogo5QLF+eCSo8Jb6czMzJgcERERERF9QF73WA0HZCAiIiIiIgKTIyoDUVFRaNSoEfT19eHn5/fKupmZmejXrx/MzMxga2uLqVOnyppPVNrYv6k8Y/8movLug7utjspepUqVMHHiROzfvx///vvvK+uOGjUKDx48wPXr15GamgofHx84OTnB399frflEpY39m8oz9m8iKu8UQghR1kGUpszMTJibmyMjI4PPHJWxyZMnIyEhAdu3by9yfnZ2NiwtLXH06FE0atQIAPB///d/2LFjBw4dOvTa+URlif2byjP2byJ636ibA/C2OnpnJSUlITc3F+7u7lKZu7s7Tp8+rdZ8oncZ+zeVZ+zfRPS+YnJE76ysrCwYGxtDR+d/d39aWFjg0aNHas0nepexf1N5xv5NRO8rJkf0zjIxMUF2djby8vKksoyMDGl8+tfNJ3qXsX9Tecb+TUTvKyZH9M6qXr06dHV1cerUKaksISEBdevWVWs+0buM/ZvKM/ZvInpfMTmiUpeXl4enT58iLy8PBQUFePr0KXJzc1XqGRkZoXfv3pg0aRIyMjJw6dIlLFy4EIMGDVJrPlFZYP+m8oz9m4jKPfGBycjIEABERkZGWYfywQoLCxMAlP68vb2FEEJ06NBBTJs2TaqbkZEh+vTpI0xMTIS1tbUIDw9XWtfr5hOVNvZvKs/Yv4nofaVuDsChvImIiIiIqFzjUN5EREREREQylGly9Oeff6JLly6oVKkSFApFsT8m96KDBw+iYcOG0NfXR5UqVbBq1aoSj5OIiIiIiMq/Mk2OHj9+jPr162PRokVq1U9OTkbnzp3RunVrJCQkYOzYsRg0aBD27t1bwpESEREREVF5p/P6KiWnY8eO6Nixo9r1o6Oj4eLigjlz5gAAatasiSNHjmDevHnw9fUtqTCJiIiIiOgD8F49c3T8+HH4+Pgolfn6+uL48eNlFBEREREREZUXZXrlSK47d+7A1tZWqczW1haZmZl48uQJDA0NVZbJyclBTk6ONJ2ZmVnicRIRERER0fvnvUqO3kRERATCw8PLOoxiOY/fWdYhUDmRMqNzWYeggv2bNIX9m8qzd7F/E32o3qvb6uzs7HD37l2lsrt378LMzKzIq0YAEBISgoyMDOnvxo0bpREqERERERG9Z96rK0deXl7YtWuXUtm+ffvg5eVV7DL6+vrQ19cv6dCIiIiIiOg9V6ZXjrKyspCQkICEhAQAz4fqTkhIwPXr1wE8v+rj7+8v1R86dCiuXr2Kb7/9FomJiVi8eDE2btyIcePGlUX4RERERERUjpRpcvTPP/+gQYMGaNCgAQAgODgYDRo0QGhoKADg9u3bUqIEAC4uLti5cyf27duH+vXrY86cOfjpp584jDcREREREb21Mr2trlWrVhBCFDt/1apVRS5z8uTJEoyKiIiIiIg+RO/VgAxEREREREQlhckRERERERERmBwREREREREBYHJEREREREQEgMkRERERERERACZHREREREREAJgcERERERERAWByREREREREBIDJEREREREREQAmR0RERERERACYHBEREREREQFgckRERERERASAyREREREREREAJkdEREREREQAmBwREREREREBYHJEREREREQEgMkRERERERERgDdMjtLT0/HTTz8hJCQEDx48AADEx8fj5s2bGg2OiIiIiIiotOjIXeD06dPw8fGBubk5UlJSMHjwYFSoUAFbt27F9evXsWbNmpKIk4iIiIiIqETJvnIUHByMwMBAXLp0CQYGBlJ5p06d8Oeff2o0OCIiIiIiotIiOzk6ceIEhgwZolLu4OCAO3fuaCQoIiIiIiKi0iY7OdLX10dmZqZK+cWLF2Ftba2RoIiIiIiIiEqb7OSoa9eumDJlCp49ewYAUCgUuH79Or77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4Mcff4SVlZVay0RERCA8PLyEIyMiIiIiovedrORIR0cHQ4cOxYULFzTSuJWVFbS1tXH37l2l8rt378LOzk6l/pUrV5CSkoIuXbpIZQUFBVJsSUlJcHNzU1omJCQEwcHB0nRmZiYcHR01Ej8REREREZUfsp85atKkidq3tL2Onp4ePDw8EBsbK5UVFBQgNjYWXl5eKvVr1KiBM2fOICEhQfrr2rUrWrdujYSEhCKTHn19fZiZmSn9ERERERERvUz2M0fDhw9HcHAwbty4AQ8PDxgbGyvNr1evnqz1BQcHIyAgAI0aNUKTJk0QGRmJx48fIygoCADg7+8PBwcHREREwMDAAHXq1FFa3sLCAgBUyomIiIiIiOSQnRz16dMHADB69GipTKFQQAgBhUKB/Px8Wevr3bs30tLSEBoaijt37sDd3R179uyRBmm4fv06tLRkX+AiIiIiIiKSRXZylJycrPEgRo4ciZEjRxY57+DBg69cdtWqVRqPh4iIiIiIPjyykyMnJ6eSiIOIiIiIiKhMyU6O1qxZ88r5/v7+bxwMERERERFRWZGdHI0ZM0Zp+tmzZ8jOzoaenh6MjIyYHBERERER0XtJ9kgHDx8+VPrLyspCUlISPv74Y/zyyy8lESMREREREVGJ08gwcFWrVsWMGTNUrioRERERERG9LzQ2RraOjg5u3bqlqdURERERERGVKtnPHP36669K00II3L59G1FRUWjevLnGAiMiIiIiIipNspMjPz8/pWmFQgFra2u0adMGc+bM0VRcREREREREpUp2clRQUFAScRAREREREZUp2c8cTZkyBdnZ2SrlT548wZQpUzQSFBERERERUWmTnRyFh4cjKytLpTw7Oxvh4eEaCYqIiIiIiKi0yU6OhBBQKBQq5adOnUKFChU0EhQREREREVFpU/uZI0tLSygUCigUClSrVk0pQcrPz0dWVhaGDh1aIkESERERERGVNLWTo8jISAghMGDAAISHh8Pc3Fyap6enB2dnZ3h5eZVIkERERERERCVN7eQoICAAAODi4oLmzZtDR0f2QHdERERERETvLNnPHD1+/BixsbEq5Xv37sXu3bs1EhQREREREVFpk50cjR8/Hvn5+SrlQgiMHz9eI0ERERERERGVNtnJ0aVLl1CrVi2V8ho1auDy5csaCYqIiIiIiKi0yU6OzM3NcfXqVZXy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
+"></figure><pre class="out">&lt;Figure size 850x340 with 1 Axes&gt;</pre></div></section>
+<section class="md"><h3>12. Executed Real FinQA Retrieval and Hugging Face Evaluation</h3>
+
+<p>The following code cell <strong>was executed</strong> in the uploaded original with <code>RUN_REAL_FINQA=True</code>. It retrieved 100 real FinQA <code>dev</code> examples, loaded <strong>sentence-transformers/all-MiniLM-L6-v2</strong> and <strong>google/flan-t5-small</strong>, and ran the first eight QA examples. Model download progress widgets were suppressed in this cleaned submission, but the actual recorded dataset, metrics and answer outputs are preserved.</p>
+
+<p><strong>Important:</strong> The <code>Verified</code> column in the printed dataframe is the system's <strong>structural evaluator</strong>, not numeric or claim-level answer correctness. A true flag does <strong>not</strong> prove the answer matches the financial gold answer.</p>
+</section>
+<section class="cell"><div class="cellnum">Code cell 36 · execution 18</div><pre class="codeblock"><code>if RUN_REAL_FINQA:
+    real_docs, qa_eval, finqa_meta = fetch_finqa(&quot;dev&quot;, limit=FINQA_RECORD_LIMIT)
+    print(&quot;Official FinQA source and subset:&quot;, finqa_meta)
+    print(&quot;First question:&quot;, qa_eval[0][&quot;question&quot;])
+    print(&quot;First report context (preview):&quot;, real_docs[0].content[:500])
+
+    model_backend = LocalLLM(&quot;google/flan-t5-small&quot;) if USE_LOCAL_HF_LLM else None
+    finqa_agent = InvestmentResearchAgent(
+        documents=real_docs,
+        memory_path=str(Path(_demo_session.name) / &quot;finqa_notes.json&quot;),
+        embedding_backend=&quot;sentence_transformer&quot; if USE_SENTENCE_EMBEDDINGS else &quot;tfidf&quot;,
+        llm=model_backend,
+    )
+    print(&quot;Retriever:&quot;, finqa_agent.retriever.backend)
+    print(&quot;Generation backend:&quot;, &quot;google/flan-t5-small&quot; if model_backend else &quot;extractive demo baseline&quot;)
+    retr_eval = retrieval_metrics(finqa_agent.retriever, qa_eval[:30], k=3)
+    print(&quot;FinQA sampled retrieval metrics:&quot;, retr_eval)
+
+    generated = []
+    for record in qa_eval[:FINQA_EVAL_QUESTIONS]:
+        predicted = finqa_agent.run(&quot;FINQA&quot;, record[&quot;question&quot;], top_k=3)
+        generated.append(predicted)
+    qa_metrics = finqa_answer_accuracy(generated, qa_eval[:FINQA_EVAL_QUESTIONS])
+    print(&quot;FinQA numeric QA metrics (educational, not official):&quot;,
+          {k: v for k, v in qa_metrics.items() if k != &quot;details&quot;})
+    display(pd.DataFrame([{
+        &quot;Question&quot;: q[&quot;question&quot;], &quot;Predicted&quot;: p[&quot;answer&quot;],
+        &quot;Gold Answer (evaluation only)&quot;: q[&quot;gold_answer&quot;],
+        &quot;Retriever Sources&quot;: &quot;, &quot;.join(x[&quot;id&quot;] for x in p[&quot;retrieved&quot;]),
+        &quot;Verified&quot;: p[&quot;evaluation&quot;][&quot;passed&quot;],
+    } for p, q in zip(generated, qa_eval[:FINQA_EVAL_QUESTIONS])]))
+else:
+    print(&quot;Not executed: set RUN_REAL_FINQA=True in a networked Colab environment.&quot;)
+    print(&quot;The demonstration above must not be described as FinQA benchmark or LLM performance.&quot;)</code></pre><div class="outputs"><pre class="out">Official FinQA source and subset: {'source_url': 'https://raw.githubusercontent.com/czyssrs/FinQA/main/dataset/dev.json', 'split': 'dev', 'subset': 100, 'note': 'Contiguous subset for lab runtime, not full benchmark'}
+First question: what is the average payment volume per transaction for american express?
+First report context (preview): PRE-TABLE: largest operators of open-loop and closed-loop retail electronic payments networks the largest operators of open-loop and closed-loop retail electronic payments networks are visa , mastercard , american express , discover , jcb and diners club . with the exception of discover , which primarily operates in the united states , all of the other network operators can be considered multi- national or global providers of payments network services . based on payments volume , total volume , 
+</pre>
+<pre class="out">Retriever: sentence_transformer (sentence-transformers/all-MiniLM-L6-v2)
+Generation backend: google/flan-t5-small
+FinQA sampled retrieval metrics: {'num_questions': 30, 'hit_at_3': 0.5666666666666667, 'mrr_at_3': 0.5111111111111112}
+FinQA numeric QA metrics (educational, not official): {'n': 8, 'numeric_accuracy': 0.0, 'abstention_rate': 0.125}
+</pre>
+<div class="pandas">
+  <div id="df-7e121544-bccd-47e1-b542-9d6ae0fb4d39" class="colab-df-container">
+    <div>
+<style scoped>
+    .dataframe tbody tr th:only-of-type {
+        vertical-align: middle;
+    }
+
+    .dataframe tbody tr th {
+        vertical-align: top;
+    }
+
+    .dataframe thead th {
+        text-align: right;
+    }
+</style>
+<table border="1" class="dataframe">
+  <thead>
+    <tr style="text-align: right;">
+      <th></th>
+      <th>Question</th>
+      <th>Predicted</th>
+      <th>Gold Answer (evaluation only)</th>
+      <th>Retriever Sources</th>
+      <th>Verified</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <th>0</th>
+      <td>what is the average payment volume per transac...</td>
+      <td>Insufficient evidence in the available sources.</td>
+      <td>127.40000</td>
+      <td></td>
+      <td>False</td>
+    </tr>
+    <tr>
+      <th>1</th>
+      <td>what was the percentage cumulative total retur...</td>
+      <td>0 [Calculator result: 0 from 0]</td>
+      <td>0.93500</td>
+      <td>C/2017/page_328.pdf-1, ETFC/2014/page_26.pdf-2...</td>
+      <td>True</td>
+    </tr>
+    <tr>
+      <th>2</th>
+      <td>what percentage of the total oil and gas mmboe...</td>
+      <td>6648 [Calculator result: 0 from 0]</td>
+      <td>24.69136</td>
+      <td>MRO/2006/page_33.pdf-1, MRO/2007/page_149.pdf-...</td>
+      <td>True</td>
+    </tr>
+    <tr>
+      <th>3</th>
+      <td>in 2010 what was the net change in net revenue...</td>
+      <td>reinsurance revenues increase [Calculator resu...</td>
+      <td>19.20000</td>
+      <td>ETR/2011/page_341.pdf-3, AON/2009/page_48.pdf-...</td>
+      <td>True</td>
+    </tr>
+    <tr>
+      <th>4</th>
+      <td>what are the deferred fuel cost revisions as a...</td>
+      <td>2022 a decrease of $ 12.2 million in rate refu...</td>
+      <td>0.60306</td>
+      <td>ETR/2004/page_213.pdf-2, ETR/2004/page_213.pdf...</td>
+      <td>True</td>
+    </tr>
+    <tr>
+      <th>5</th>
+      <td>what was the change in millions of operating i...</td>
+      <td>in rrp net revenues , excluding excise taxes ,...</td>
+      <td>688.00000</td>
+      <td>PM/2017/page_38.pdf-1, PM/2017/page_38.pdf-3, ...</td>
+      <td>True</td>
+    </tr>
+    <tr>
+      <th>6</th>
+      <td>what was jpmorgan chase &amp; co's common equity t...</td>
+      <td>total [Calculator result: 0 from 0]</td>
+      <td>0.10935</td>
+      <td>JPM/2008/page_85.pdf-3, C/2008/page_102.pdf-2,...</td>
+      <td>True</td>
+    </tr>
+    <tr>
+      <th>7</th>
+      <td>at the end of 2014 , the notional value of der...</td>
+      <td>commingled funds [Calculator result: -100 from...</td>
+      <td>30.44323</td>
+      <td>PNC/2013/page_207.pdf-1, SPGI/2018/page_74.pdf...</td>
+      <td>True</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+    <div class="colab-df-buttons">
+
+  <div class="colab-df-container">
+    <button class="colab-df-convert" onclick="convertToInteractive('df-7e121544-bccd-47e1-b542-9d6ae0fb4d39')"
+            title="Convert this dataframe to an interactive table."
+            style="display:none;">
+
+  <svg xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 -960 960 960">
+    <path d="M120-120v-720h720v720H120Zm60-500h600v-160H180v160Zm220 220h160v-160H400v160Zm0 220h160v-160H400v160ZM180-400h160v-160H180v160Zm440 0h160v-160H620v160ZM180-180h160v-160H180v160Zm440 0h160v-160H620v160Z"/>
+  </svg>
+    </button>
+
+  <style>
+    .colab-df-container {
+      display:flex;
+      gap: 12px;
+    }
+
+    .colab-df-convert {
+      background-color: #E8F0FE;
+      border: none;
+      border-radius: 50%;
+      cursor: pointer;
+      display: none;
+      fill: #1967D2;
+      height: 32px;
+      padding: 0 0 0 0;
+      width: 32px;
+    }
+
+    .colab-df-convert:hover {
+      background-color: #E2EBFA;
+      box-shadow: 0px 1px 2px rgba(60, 64, 67, 0.3), 0px 1px 3px 1px rgba(60, 64, 67, 0.15);
+      fill: #174EA6;
+    }
+
+    .colab-df-buttons div {
+      margin-bottom: 4px;
+    }
+
+    [theme=dark] .colab-df-convert {
+      background-color: #3B4455;
+      fill: #D2E3FC;
+    }
+
+    [theme=dark] .colab-df-convert:hover {
+      background-color: #434B5C;
+      box-shadow: 0px 1px 3px 1px rgba(0, 0, 0, 0.15);
+      filter: drop-shadow(0px 1px 2px rgba(0, 0, 0, 0.3));
+      fill: #FFFFFF;
+    }
+  </style>
+
+    <script>
+      const buttonEl =
+        document.querySelector('#df-7e121544-bccd-47e1-b542-9d6ae0fb4d39 button.colab-df-convert');
+      buttonEl.style.display =
+        google.colab.kernel.accessAllowed ? 'block' : 'none';
+
+      async function convertToInteractive(key) {
+        const element = document.querySelector('#df-7e121544-bccd-47e1-b542-9d6ae0fb4d39');
+        const dataTable =
+          await google.colab.kernel.invokeFunction('convertToInteractive',
+                                                    [key], {});
+        if (!dataTable) return;
+
+        const docLinkHtml = 'Like what you see? Visit the ' +
+          '<a target="_blank" href=https://colab.research.google.com/notebooks/data_table.ipynb>data table notebook</a>'
+          + ' to learn more about interactive tables.';
+        element.innerHTML = '';
+        dataTable['output_type'] = 'display_data';
+        await google.colab.output.renderOutput(dataTable, element);
+        const docLink = document.createElement('div');
+        docLink.innerHTML = docLinkHtml;
+        element.appendChild(docLink);
+      }
+    </script>
+  </div>
+
+
+    </div>
+  </div>
+</div></div></section>
+<section class="md"><h4>12.1 Real-Data Findings and Limitations</h4>
+
+<p>These results are <strong>recorded actual outputs from the uploaded notebook</strong>, not hypothetical targets or an official full-benchmark score.</p>
+
+<table><tbody>
+<tr><td>Metric</td><td>Observed result</td><td>Scope</td></tr>
+<tr><td>FinQA development records loaded</td><td><strong>100</strong></td><td>First 100 records</td></tr>
+<tr><td>Embeddings / retrieval</td><td><strong>MiniLM-L6-v2 dense vectors</strong></td><td>Local model</td></tr>
+<tr><td>Answer generation</td><td><strong>google/flan-t5-small</strong></td><td>Local model</td></tr>
+<tr><td>Retrieval Hit@3</td><td><strong>56.7%</strong></td><td>30 questions</td></tr>
+<tr><td>Retrieval MRR@3</td><td><strong>0.5111</strong></td><td>30 questions</td></tr>
+<tr><td>Numerical accuracy</td><td><strong>0/8 = 0%</strong></td><td>Eight generated answers</td></tr>
+<tr><td>Abstentions</td><td><strong>1/8 = 12.5%</strong></td><td>Eight generated answers</td></tr>
+</tbody></table>
+
+<p><strong>Successful execution is not successful financial reasoning.</strong> Even where the system prints <code>Verified=True</code>, none of eight answers met the notebook's approximate numeric gold-answer test. Some predictions include calculator text such as <code>0 from 0</code>; invoking a calculator is not evidence that correct operands, rows, year comparisons or operations were selected.</p>
+
+<p><strong>Why the failure matters:</strong> The retriever does not find the gold report in the top three for every question, and small instruction-tuned generation can misread financial tables or choose invalid operations. The evaluator checks structure/source IDs more readily than the actual numerical claim, so its verdict is <strong>not</strong> an accuracy measure.</p>
+
+<p><strong>Next steps:</strong> improve table-specific retrieval and chunking, recover the precise row and unit for every operand, use constrained executable financial reasoning, verify each computation against cited evidence, abstain when source cells cannot be found, and test on larger held-out data. The current prototype is <strong>not suitable for investment decisions</strong>.</p>
+</section>
+<section class="md"><h3>13. Executed Read-Only Market API</h3>
+
+<p>The original execution also called <code>fetch_yahoo_snapshot(&quot;AAPL&quot;)</code> through <code>yfinance</code>. The saved output includes a source and timestamp. This is a historical market-data response that may be delayed, <strong>not financial advice</strong> and not a brokerage trade.</p>
+</section>
+<section class="cell"><div class="cellnum">Code cell 39 · execution 19</div><pre class="codeblock"><code>RUN_LIVE_MARKET_API = True
+if RUN_LIVE_MARKET_API:
+    live_snapshot = fetch_yahoo_snapshot(&quot;AAPL&quot;)
+    print(&quot;Live market snapshot (read only):&quot;, live_snapshot)
+else:
+    print(&quot;Live Yahoo Finance request not executed; offline DEMO price is fictional.&quot;)</code></pre><div class="outputs"><pre class="out">Live market snapshot (read only): {'price': 343.46, 'volume': 59895300, 'as_of': '2026-10-16 00:00:00-04:00', 'source': 'Yahoo Finance via yfinance', 'note': 'May be delayed; informational only'}
+</pre></div></section>
+<section class="md"><h3>14. Testing and Error Analysis</h3>
+
+<h4>Reproducible acceptance checks</h4>
+
+<p>The tests include: mathematical tool correctness and code-injection rejection, all three routes, five-stage news chain, retrieval, numerical calculation, unsupported-question abstention, iterative review, memory persistence, and FinQA answer-label isolation.</p>
+
+<h4>Observed failure modes and mitigations</h4>
+
+<table><tbody>
+<tr><td>Failure mode</td><td>Why it occurs</td><td>Mitigation and remaining limitation</td></tr>
+<tr><td>Report context not retrieved</td><td>lexical/dense mismatch</td><td>compare top-k retrieval hit and MRR; tune chunks/embeddings</td></tr>
+<tr><td>Text/table arithmetic</td><td>quantitative reasoning exceeds small model</td><td>use restricted calculator, validate operands, evaluate numeric answers</td></tr>
+<tr><td>Unsupported question</td><td>source corpus lacks relevant information</td><td>abstain and request human review rather than inventing</td></tr>
+<tr><td>Prompt injection in documents</td><td>untrusted context can contain instructions</td><td>keep retrieval as data, never grant model brokerage permissions</td></tr>
+<tr><td>Incorrect source citation</td><td>generator may invent a citation</td><td>validate IDs; note ID validity alone is not semantic faithfulness</td></tr>
+<tr><td>Stale market data</td><td>cached/fallback financial information</td><td>explicit timestamps, read-only live source, no automatic trading</td></tr>
+<tr><td>Agent loop/cost escalation</td><td>uncontrolled feedback iterations</td><td>exactly one bounded refinement iteration</td></tr>
+</tbody></table>
+
+<p>The <em>structural evaluator score</em> is <strong>not</strong> financial factuality or official FinQA accuracy. The project demonstrates the difference explicitly.</p></section>
+<section class="cell"><div class="cellnum">Code cell 41 · execution 20</div><pre class="codeblock"><code># Standalone acceptance assertions (no network, no files outside this notebook).
+assert round(safe_calculate(&quot;(250-200)/200*100&quot;), 6) == 25.0
+for unsafe in (&quot;__import__('os')&quot;, &quot;open('/etc/passwd')&quot;, &quot;x + 1&quot;):
+    try:
+        safe_calculate(unsafe)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError(f&quot;Unsafe arithmetic unexpectedly accepted: {unsafe}&quot;)
+
+assert detect_specialist(&quot;latest company news&quot;) == &quot;news&quot;
+assert detect_specialist(&quot;stock price today&quot;) == &quot;market&quot;
+assert detect_specialist(&quot;revenue growth&quot;) == &quot;earnings&quot;
+assert not demo_runs[3][&quot;evaluation&quot;][&quot;passed&quot;]
+assert len(demo_runs[3][&quot;iterations&quot;]) == 2
+assert agent.memory.path.exists()
+leak_check = {&quot;id&quot;: &quot;demo&quot;, &quot;pre_text&quot;: [&quot;sales are positive&quot;],
+              &quot;post_text&quot;: [], &quot;table&quot;: [[&quot;Revenue&quot;, &quot;$10&quot;]],
+              &quot;qa&quot;: {&quot;question&quot;: &quot;sample?&quot;, &quot;exe_ans&quot;: &quot;LEAKED_GOLD_VALUE&quot;,
+                     &quot;program&quot;: &quot;LEAKED_ORACLE_PROGRAM&quot;}}
+converted = finqa_to_document(leak_check, split=&quot;test&quot;)
+assert &quot;LEAKED_GOLD_VALUE&quot; not in converted.content
+assert &quot;LEAKED_ORACLE_PROGRAM&quot; not in converted.content
+print(&quot;ACCEPTANCE CHECKS PASSED: safe arithmetic, routes, abstention, &quot;
+      &quot;iteration, memory persistence, gold-answer separation&quot;)</code></pre><div class="outputs"><pre class="out">ACCEPTANCE CHECKS PASSED: safe arithmetic, routes, abstention, iteration, memory persistence, gold-answer separation
+</pre></div></section>
+<section class="md"><h3>15. Conclusion, Insights and Limitations</h3>
+
+<p>FinSight demonstrates a read-only, multi-specialist financial research architecture with tool-driven planning, earnings/news/market routing, five-stage news processing, evaluator–optimizer revision and persistent feedback notes.</p>
+
+<p>The <strong>fictional offline demonstration</strong> successfully tested architecture and a restricted calculator. <strong>The real evaluation also executed:</strong> 100 FinQA development records were downloaded and indexed with MiniLM sentence embeddings, and FLAN-T5-Small generated responses to eight financial questions.</p>
+
+<p><strong>Observed real-data results:</strong> Retrieval Hit@3 <strong>56.7%</strong> and MRR@3 <strong>0.5111</strong> over 30 queries; <strong>0/8 numeric answers correct (0%)</strong>, with <strong>1/8 abstentions (12.5%)</strong> over eight generated examples. These are small educational subsets, not official FinQA benchmark results. The zero score is a significant limitation and should not be concealed.</p>
+
+<p>A key conclusion is that <strong>retrieval, structural verification and financial correctness are separate measurements</strong>. The system's <code>Verified</code> flag can pass when the numerical prediction is wrong. Future iterations should verify exact table cell operands, operations, units, evidence fidelity and arithmetic correctness using independent checks and program execution. The current architecture is suitable as a course prototype, not a production financial recommendation system.</p>
+
+<p>Memory improves later routing depth in the offline example but does not retrain the underlying model. The market API is read-only and a saved quote may be stale. GitHub collaboration and individual contributions should be evidenced separately by team activity.</p>
+
+<p><strong>GitHub:</strong> https://github.com/karthik1997/finsight-multi-agent-financial-analysis</p>
+</section>
+<section class="md"><h3>16. References (APA)</h3>
+
+<p>Chen, Z., Chen, W., Smiley, C., Shah, S., Borova, I., Langdon, D., Moussa, R., Beane, M., Huang, T.-H. K., Routledge, B. R., &amp; Wang, W. Y. (2021). FinQA: A dataset of numerical reasoning over financial data. <em>Proceedings of the 2021 Conference on Empirical Methods in Natural Language Processing</em>, 3697–3711. https://aclanthology.org/2021.emnlp-main.300/</p>
+
+<p>Lewis, P., Perez, E., Piktus, A., Petroni, F., Karpukhin, V., Goyal, N., Küttler, H., Lewis, M., Yih, W.-T., Rocktäschel, T., Riedel, S., &amp; Kiela, D. (2020). Retrieval-augmented generation for knowledge-intensive NLP tasks. <em>Advances in Neural Information Processing Systems, 33</em>, 9459–9474. https://arxiv.org/abs/2005.11401</p>
+
+<p>National Institute of Standards and Technology. (2023). <em>Artificial intelligence risk management framework (AI RMF 1.0)</em> (NIST AI 100-1). https://doi.org/10.6028/NIST.AI.100-1</p>
+
+<p>Shinn, N., Cassano, F., Gopinath, A., Narasimhan, K., &amp; Yao, S. (2023). Reflexion: Language agents with verbal reinforcement learning. <em>Advances in Neural Information Processing Systems, 36</em>. https://arxiv.org/abs/2303.11366</p>
+
+<p>Yao, S., Zhao, J., Yu, D., Du, N., Shafran, I., Narasimhan, K., &amp; Cao, Y. (2023). ReAct: Synergizing reasoning and acting in language models. <em>International Conference on Learning Representations</em>. https://arxiv.org/abs/2210.03629</p></section>
+<section class="md"><h3>17. AI-Use Disclosure</h3>
+
+<p>AI tools were used to assist with <strong>project scaffolding, implementation drafting, PEP 8-style organization, notebook authoring, testing strategy, documentation, and revision of explanatory text</strong>. Contributions included initial drafts of the research-agent planner and specialist router, the financial-news preprocessing and synthesis chain, calculator and evaluator checks, feedback-memory persistence, FinQA ingestion and evaluation code, and reproducible offline acceptance tests.</p>
+</section><footer>FinSight Team 3 · University of San Diego AAI-520 · Document generated from a saved executed notebook, with real FinQA results and their limitations explicitly reported.</footer></body></html>
